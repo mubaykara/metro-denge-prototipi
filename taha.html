@@ -1,0 +1,2059 @@
+<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>Metro Denge Prototipi</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;700&family=Barlow:wght@400;600&display=swap">
+<style>
+/* Düzen: tek ekran, vagonun içi 3D. Üstte vagonun LED tabelası, ortada karakter. Metro tabelası dili. */
+:root {
+  color-scheme: dark;
+  --tunnel: #10151b;
+  --wall: #232b34;
+  --floor: #2e3843;
+  --steel: #6d7a88;
+  --text: #eef2f5;
+  --muted: #a6b1bc;
+  --sign: #ffc82e;
+  --safe: #4cc9b0;
+  --danger: #ff6b57;
+  --led: #ff9f1a;
+  --display: "Barlow Condensed", "Arial Narrow", sans-serif;
+  --body: "Barlow", system-ui, sans-serif;
+}
+[hidden] { display: none !important; }
+html, body { height: 100%; overflow: hidden; overscroll-behavior: none; }
+body {
+  margin: 0; background: var(--tunnel); color: var(--text); font-family: var(--body);
+  -webkit-user-select: none; user-select: none; -webkit-touch-callout: none;
+}
+#app { position: relative; width: 100%; height: 100%; overflow: hidden; }
+canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; }
+#led {
+  position: absolute; z-index: 2; left: 10px; right: 92px; top: calc(10px + env(safe-area-inset-top, 0px));
+  padding: 7px 10px; border-radius: 6px; background: #0b0d10; border: 1px solid #2a2f36;
+  font: 700 17px/1.1 var(--display); letter-spacing: .06em; color: var(--led); text-transform: uppercase;
+  text-shadow: 0 0 8px rgba(255, 159, 26, .55); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+#led.blink { animation: blink 1s steps(2, start) infinite; }
+@keyframes blink { to { color: #3a2a10; text-shadow: none; } }
+#task {
+  position: absolute; z-index: 2; left: 10px; top: calc(52px + env(safe-area-inset-top, 0px)); max-width: calc(100% - 20px);
+  padding: 5px 10px; border-radius: 6px; background: rgba(11, 13, 16, .85); border: 1px solid #2a2f36;
+  font: 700 15px/1.2 var(--display); letter-spacing: .04em; text-transform: uppercase; color: var(--text);
+}
+#task.ok { color: var(--safe); border-color: var(--safe); }
+#task.fail { color: var(--danger); border-color: var(--danger); }
+#gear {
+  position: absolute; z-index: 2; right: 10px; top: calc(10px + env(safe-area-inset-top, 0px));
+  font: 600 13px var(--body); color: var(--muted); background: var(--wall);
+  border: 1px solid var(--steel); border-radius: 6px; padding: 8px 9px;
+}
+#pause {
+  position: absolute; z-index: 2; right: 10px; top: calc(54px + env(safe-area-inset-top, 0px));
+  width: 44px; height: 44px; font: 700 16px var(--body); color: var(--text); background: var(--wall);
+  border: 1px solid var(--steel); border-radius: 6px;
+  display: flex; align-items: center; justify-content: center; gap: 5px;
+}
+#pause i { width: 5px; height: 16px; background: var(--text); border-radius: 1px; }
+/* Sarsıntı uyarısı: itileceğin yöndeki ekran kenarı parlar */
+.cue { position: absolute; z-index: 1; pointer-events: none; opacity: 0; }
+.cue.l { left: 0; top: 0; bottom: 0; width: 22%; background: linear-gradient(to right, var(--cue, rgba(255, 200, 46, .75)), transparent); }
+.cue.r { right: 0; top: 0; bottom: 0; width: 22%; background: linear-gradient(to left, var(--cue, rgba(255, 200, 46, .75)), transparent); }
+.cue.t { left: 0; right: 0; top: 0; height: 16%; background: linear-gradient(to bottom, var(--cue, rgba(255, 200, 46, .75)), transparent); }
+.cue.b { left: 0; right: 0; bottom: 0; height: 16%; background: linear-gradient(to top, var(--cue, rgba(255, 200, 46, .75)), transparent); }
+/* Tutunmama çarpanı */
+#combo {
+  position: absolute; z-index: 2; left: 0; right: 0; bottom: calc(18px + env(safe-area-inset-bottom, 0px));
+  text-align: center; pointer-events: none; font: 700 20px var(--display); letter-spacing: .04em; color: var(--muted);
+  text-shadow: 0 2px 8px rgba(0, 0, 0, .8);
+}
+#combo b { font-size: 40px; color: var(--sign); margin-right: 8px; display: inline-block; }
+#combo b.pop { animation: pop .35s ease-out; }
+#combo.lost b { color: var(--muted); }
+@keyframes pop { from { transform: scale(1.6); } to { transform: scale(1); } }
+#flash {
+  position: absolute; z-index: 2; left: 0; right: 0; top: 30%; text-align: center; pointer-events: none;
+  font: 700 34px var(--display); letter-spacing: .03em; text-transform: uppercase;
+  text-shadow: 0 2px 10px rgba(0, 0, 0, .7); opacity: 0; transition: opacity .25s;
+}
+#flash.on { opacity: 1; transition: none; }
+#overlay {
+  position: absolute; inset: 0; z-index: 3; display: flex; align-items: center; justify-content: center;
+  background: rgba(16, 21, 27, .82); overflow-y: auto;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 16px;
+}
+#panel { width: 100%; max-width: 400px; display: flex; flex-direction: column; gap: 12px; margin: auto; }
+#panel h1 {
+  margin: 0; font: 700 44px/1 var(--display); letter-spacing: .01em; text-transform: uppercase;
+  color: var(--sign); text-wrap: balance;
+}
+#panel p { margin: 0; font-size: 16px; line-height: 1.45; color: var(--text); }
+#panel ul { margin: 0; padding-left: 20px; display: grid; gap: 6px; font-size: 15px; line-height: 1.4; }
+#panel .small { font-size: 14px; color: var(--muted); }
+#panel .stars { font: 700 44px var(--display); color: var(--sign); letter-spacing: .1em; }
+#panel .score { font: 700 22px var(--display); letter-spacing: .04em; color: var(--text); }
+#panel button {
+  font: 700 22px var(--display); letter-spacing: .03em; text-transform: uppercase;
+  padding: 14px; border-radius: 6px; border: 1px solid var(--steel);
+  background: var(--wall); color: var(--text); touch-action: manipulation;
+}
+#panel button.primary { background: var(--sign); color: var(--tunnel); border-color: var(--sign); }
+button:focus-visible, input:focus-visible { outline: 2px solid var(--safe); outline-offset: 2px; }
+.row { display: grid; gap: 4px; font-size: 15px; }
+.row label { display: flex; justify-content: space-between; gap: 12px; }
+.row output { font-variant-numeric: tabular-nums; color: var(--sign); }
+input[type=range] { width: 100%; accent-color: var(--sign); touch-action: pan-x; }
+pre {
+  margin: 0; padding: 10px; background: var(--tunnel); border: 1px solid var(--wall); border-radius: 6px;
+  font-size: 12px; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--muted);
+  -webkit-user-select: text; user-select: text;
+}
+</style>
+<script type="importmap">{ "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js" } }</script>
+</head>
+<body>
+<div id="app">
+  <canvas id="game" role="img" aria-label="Metro vagonunun içinde ayakta duran karakter, yolcular ve kapılar"></canvas>
+  <div id="led"></div>
+  <div id="task" hidden></div>
+  <button id="gear" type="button">Ayarlar</button>
+  <button id="pause" type="button" aria-label="Duraklat"><i></i><i></i></button>
+  <div class="cue l"></div><div class="cue r"></div><div class="cue t"></div><div class="cue b"></div>
+  <div id="combo" hidden><b>×1</b><span>0</span></div>
+  <div id="flash"></div>
+  <div id="overlay"><div id="panel"></div></div>
+</div>
+
+<script type="module">
+import * as THREE from "three";
+
+const $ = (id) => document.getElementById(id);
+const css = getComputedStyle(document.documentElement);
+const C = Object.fromEntries(["tunnel", "wall", "floor", "steel", "text", "muted", "sign", "safe", "danger"]
+  .map((k) => [k, css.getPropertyValue("--" + k).trim()]));
+
+// ---------- Ayarlanabilir değerler ----------
+// tilt: tam güç için gereken eğim (derece); invert: eğim yönlerini ters çevir; help: gizli yardım açık mı.
+const DEFAULTS = { gain: 8, force: 1, recover: 2, tilt: 22, invert: false, help: true, sound: true };
+const T = { ...DEFAULTS };
+try { Object.assign(T, JSON.parse(localStorage.getItem("denge-ayar-5") || "{}")); } catch (e) {}
+const saveT = () => { try { localStorage.setItem("denge-ayar-5", JSON.stringify(T)); } catch (e) {} };
+
+// Denge: telefonu hangi yöne eğersen karakterin ağırlığı oraya kayar. Yürümek için yere dokunursun.
+// Yürürken denge çok daha zayıftır, bu yüzden ne zaman yürüyeceğine yolu okuyarak karar verirsin.
+// Zor görünür, kolay oynanır: karakter gerçekte olduğundan daha yatık çizilir, gizli yardım
+// zorlanan ama çabalayan oyuncuya fark ettirmeden yardım eder, kapı yetişmek üzere olana biraz daha açık kalır.
+const DAMP = 3, STUMBLE_TIME = 1.6, FALL_LIMIT = 1.8, FIXED = 1 / 120, THUMB_RANGE = 60;
+const SHOW = 1.5, DEAD_ZONE = 2, NEUTRAL_DRIFT = 5;
+const WALK_SPEED = 1.3, WALK_FORCE = 1.7, WALK_RECOVER = .6, AHEAD = 10;
+const DOOR_OPEN = 4, STOP_TIME = 5.5, ANNOUNCE = 10, NPC_SPEED = .9, ELDER_SPEED = .45, RIVAL_SPEED = .7;
+
+// ---------- Araç ölçüleri (metre): körüklü metrobüs. x sağa, z arkaya, ön cam z = BUS.front'ta ----------
+// İstanbul metrobüsü şeridin solundan gider; kapılar hep sağdan, iki yönün ortasındaki peronlara açılır.
+const BUS = { halfW: 1.27, front: -9.2, back: 9.2, height: 2.45 };
+const JOINT = -1; // körük (ön ve arka gövdenin birleştiği döner tabla)
+const DOORS = [-7.9, -3.4, 1.9, 6.6]; // sağ duvardaki dört kapının z konumları
+const START = [.2, 3.4];
+const nearDoor = (z) => DOORS.some((d) => Math.abs(z - d) < .55);
+const inDoorZone = (x, z, side) => x * side > .55 && nearDoor(z);
+const sideName = (s) => (s > 0 ? "sağdan" : "soldan");
+
+// ---------- Çarpışma (kuşbakışı x,z). Beden, kol ve baş duvardan, koltuktan, direkten ya da başka birinden geçmez ----------
+// BODY_R kollar dahil beden yarıçapı. Üst gövde dengeye göre LEAN_M metre/birim kayar; bir şeye değince oraya yaslanır.
+const BODY_R = .3, TORSO_R = .22, SHOULDER_R = .24, LEAN_M = .55, WALL_X = BUS.halfW - .04;
+const POLES = []; // [x, z, yarıçap]
+// Koridor kenarında, koltuk sıralarının arasında dikey direkler; körükte direk yok
+for (let z = -7.2; z <= 8.4; z += 1.6) {
+  if (Math.abs(z - JOINT) < .8) continue;
+  POLES.push([-.31, z, .03]);
+  // Sağda tekli koltuk sırası varsa koridor kenarında, yoksa (ayakta durma alanı) cam kenarında
+  if (!DOORS.some((d) => Math.abs(z - d) < .8)) POLES.push([z < JOINT - .9 || z > 7.5 ? .74 : WALL_X - .07, z, .03]);
+}
+for (const d of DOORS) for (const s of [-1, 1]) POLES.push([WALL_X, d + s * .57, .03]); // kapı çerçeveleri
+// Koltuklar öne bakar: solda ikili, sağda tekli sıralar. Kapı önleri, körük ve tekerlekli sandalye alanı boş.
+// Cam kenarındaki koltuğa yalnızca yanındaki koridor koltuğundan geçilir; görevler koridor koltuklarını seçer.
+const SEATS = [], SEAT_AISLE = [];
+for (let z = -7.6; z <= 8.7; z += .8) {
+  if (Math.abs(z - JOINT) < .9) continue;
+  if (Math.abs(z - DOORS[2]) >= 1) { SEATS.push([-1, z]); SEAT_AISLE.push(false); SEATS.push([-.55, z]); SEAT_AISLE.push(true); }
+  if ((z < JOINT - .9 || z > 7.5) && !DOORS.some((d) => Math.abs(z - d) < 1)) { SEATS.push([.98, z]); SEAT_AISLE.push(true); } // arka gövdenin sağı ayakta durma alanı
+}
+const AISLE_X = .22; // koridorun ortası
+// Sağda tekli koltuk olan sıralarda koridor tek kişilik: ayakta duran orayı kapatır, yolcular orada durmaz.
+const PINCH = (z) => SEATS.some(([sx, sz]) => sx > 0 && Math.abs(sz - z) < .62);
+const seatFront = (i) => [SEATS[i][0] < 0 ? -.02 : .45, SEATS[i][1]];
+const RECTS = SEATS.map(([x, z]) => [x - .22, x + .22, z - .21, z + .23]);
+const CAB = [-BUS.halfW, -.12, BUS.front, BUS.front + 1.05]; // sol öndeki sürücü kabini
+RECTS.push(CAB);
+function pushCircle(pt, R, x, z) {
+  const dx = pt[0] - x, dz = pt[1] - z, d = Math.hypot(dx, dz);
+  if (d >= R) return;
+  if (d < 1e-6) { pt[0] = x - Math.sign(x || 1) * R; return; }
+  pt[0] = x + dx / d * R; pt[1] = z + dz / d * R;
+}
+// Noktayı (r yarıçaplı beden) sabit engellerin dışına iter; itildiyse true döner.
+function pushStatic(pt, r) {
+  const x0 = pt[0], z0 = pt[1];
+  for (let it = 0; it < 3; it++) {
+    pt[0] = Math.max(-WALL_X + r, Math.min(WALL_X - r, pt[0]));
+    pt[1] = Math.max(BUS.front + .04 + r, Math.min(BUS.back - .04 - r, pt[1]));
+    for (const [a, b, c, e] of RECTS) {
+      const cx = Math.max(a, Math.min(b, pt[0])), cz = Math.max(c, Math.min(e, pt[1]));
+      const dx = pt[0] - cx, dz = pt[1] - cz, d = Math.hypot(dx, dz);
+      if (d >= r) continue;
+      if (d < 1e-6) pt[0] = a > 0 ? a - r : b + r;
+      else { pt[0] = cx + dx / d * r; pt[1] = cz + dz / d * r; }
+    }
+    for (const [x, z, pr] of POLES) pushCircle(pt, r + pr, x, z);
+  }
+  return Math.abs(pt[0] - x0) > 1e-6 || Math.abs(pt[1] - z0) > 1e-6;
+}
+// Üst gövdenin değebileceği yüzeyler: [nx, nz, uzaklık, yolcu]. Açık kapının olduğu yerde duvar yok.
+function supports(x, z, openSide) {
+  const out = [];
+  const gap = openSide && nearDoor(z);
+  if (!(gap && openSide > 0)) out.push([1, 0, WALL_X - x, null]);
+  if (!(gap && openSide < 0)) out.push([-1, 0, WALL_X + x, null]);
+  out.push([0, -1, z - BUS.front - .04, null], [0, 1, BUS.back - .04 - z, null]);
+  const circ = (cx, cz, r, who) => {
+    const dx = cx - x, dz = cz - z, d = Math.hypot(dx, dz);
+    if (d < 1.4 && d > 1e-6) out.push([dx / d, dz / d, d - r, who]);
+  };
+  for (const [px, pz, pr] of POLES) circ(px, pz, pr, null);
+  for (const n of G.npcs) if (n.state !== "exit" && n.state !== "board") circ(n.x, n.z, TORSO_R, n);
+  return out;
+}
+// Kolların yana açılabileceği boşluk (sol, sağ), omuz ekleminden ölçülür.
+function armRoom(x, z, p, openSide) {
+  const room = [9, 9];
+  for (const [nx, nz, d] of supports(x, z, openSide)) for (let i = 0; i < 2; i++) {
+    const s = i ? 1 : -1;
+    if (nx * s < .5) continue;
+    room[i] = Math.min(room[i], (d - s * p[0] * LEAN_M) / (nx * s) - .33);
+  }
+  return room;
+}
+// Kapıdan çıkmakta olan (yarıdan fazlası dışarıda) artık engel sayılmaz; binmekte olan kapı ağzını tutar.
+const solidNpcs = () => G.npcs.filter((n) => n.state !== "exit" || n.outT < .5);
+const hitsPerson = (pt, r, skip) => solidNpcs().some((n) => n !== skip && Math.hypot(n.x - pt[0], n.z - pt[1]) < r);
+// Bir yönde düşmeden önce ne kadar boş yer var
+function freeDist(x, z, dx, dz, skip = null, noPeople = false) {
+  for (let t = .1; t < 1.8; t += .05) {
+    const pt = [x + dx * t, z + dz * t];
+    if (pushStatic(pt, .15) || (!noPeople && hitsPerson(pt, TORSO_R + .15, skip))) return t;
+  }
+  return 1.8;
+}
+
+// ---------- Hat verisi ----------
+// Bir oyun bir hat yolculuğudur. Ara duraklarda yolcular iner biner, kapı tarafı duraktan durağa değişir,
+// her ara yolun bir görevi olur. Asıl hedef kendi durağında inmektir.
+const UP = [0, -1], DOWN = [0, 1], L = [-1, 0], R = [1, 0];
+const KV = { accel: DOWN, brake: UP, left: R, right: L };
+const ev = (t, k, s, d, v) => ({ t, k, s: s * .8, d, v: v || KV[k] });
+// Yol kalıpları: kuvvetler sabit, ezberlenebilir; sonuncusu en zoru.
+const SEGS = [
+  { dur: 24, sway: .3, ev: [ev(1.5, "accel", 4, 1.4), ev(6, "left", 4, 1.8), ev(11, "right", 4, 1.8), ev(21, "brake", 4.5, 2.6)] },
+  { dur: 26, sway: .5, ev: [ev(1.5, "accel", 4.5, 1.4), ev(6, "brake", 4, .9), ev(8, "accel", 4, 1), ev(12, "left", 5, 1.6), ev(15.5, "right", 5, 1.6), ev(22.8, "brake", 5, 2.8)] },
+  { dur: 28, sway: .7, ev: [ev(1.5, "accel", 5, 1.3), ev(5, "pot", 11, .22, UP), ev(8, "right", 5.5, 1.7), ev(12, "pot", 12, .22, L), ev(13.4, "pot", 12, .22, R), ev(16, "left", 5.5, 1.7), ev(19, "pot", 12, .22, DOWN), ev(24.6, "brake", 5.5, 2.8)] },
+  { dur: 30, sway: .9, ev: [ev(1.5, "accel", 5.5, 1.2), ev(5, "left", 6, 1.3), ev(6.6, "right", 6, 1.3), ev(10, "brake", 6, .8), ev(11.2, "accel", 5.5, .9), ev(14, "pot", 13, .22, UP), ev(17, "right", 6.5, 1.6), ev(20, "left", 6.5, 1.4), ev(22.5, "pot", 13, .22, R), ev(26.4, "brake", 6, 3)] },
+];
+// seg: duraktan durağa yol. to: varılan durak, side: kapının açılacağı yan, board: binecek yolcu sayısı.
+// Metrobüs hattının Anadolu yakası kısmı, gerçek durak adları ve sırasıyla (Söğütlüçeşme yönü).
+// view: camdan görünen manzara ("sehir" ya da Boğaz'ı geçen "kopru").
+const LINES = [
+  { name: "Metrobüs · Zincirlikuyu → Altunizade", from: "Zincirlikuyu", crowd: 5, seat: .8, seg: [
+    { to: "15 Temmuz Şehitler Köprüsü", side: 1, tpl: 0, board: 3, task: null, view: "sehir" },
+    { to: "Burhaniye", side: 1, tpl: 1, board: 2, task: "kahve", view: "kopru" },
+    { to: "Altunizade", side: 1, tpl: 1, task: "koltuk", mine: true, view: "sehir" },
+  ] },
+  { name: "Metrobüs · Altunizade → Söğütlüçeşme", from: "Altunizade", crowd: 7, seat: .85, seg: [
+    { to: "Acıbadem", side: 1, tpl: 1, board: 3, task: "kahve", view: "sehir" },
+    { to: "Uzunçayır", side: 1, tpl: 2, board: 3, task: "yasli", view: "sehir" },
+    { to: "Fikirtepe", side: 1, tpl: 3, board: 3, task: "koltuk", view: "sehir" },
+    { to: "Söğütlüçeşme", side: 1, tpl: 3, task: null, mine: true, view: "sehir" },
+  ] },
+];
+const TASKS = {
+  kahve: { label: "Kahveni dökme", ok: "Kahveni dökmedin", fail: "Kahve döküldü" },
+  koltuk: { label: "Boşalan koltuğu kap", ok: "Koltuğu kaptın", fail: "Koltuğu kaptırdın" },
+  yasli: { label: "Yaşlı amcaya yol aç", ok: "Amca oturdu", fail: "Amca ayakta kaldı" },
+};
+const FALL_LINES = [
+  "Yanındaki amcanın kucağına oturdun.",
+  "Çantan ayakta kaldı, sen kalamadın.",
+  "Bütün vagon sana baktı. Kimse yardım etmedi.",
+  "Bir teyze sana yer vermeyi düşündü, sonra vazgeçti.",
+  "Telefonun önce yere düştü, sen hemen arkasından.",
+];
+const KNOCK_LINES = [
+  "Düşerken yanındakini de götürdün.",
+  "İki kişiyi devirdin. Vagon alkışlamadı.",
+  "Üç kişi! Domino şampiyonu.",
+  "Bütün sıra yerde. Sürücü aynadan baktı.",
+];
+const MISS_LINES = [
+  "Kapılar yüzüne kapandı. Bir sonraki durakta görüşürüz.",
+  "Bir dahaki sefere kapının önünde bekle.",
+  "Durağını camdan el sallayarak uğurladın.",
+];
+const NPC_COLORS = [0x6d7a88, 0x4f5a66, 0x7d6a5a, 0x5a6f7d, 0x6a5d7a, 0x5d7a6a];
+const ELDER = { color: 0x8a7a6a, hair: 0xe2e2e2 };
+
+// ---------- Oyun durumu ----------
+const G = {
+  state: "menu", paused: false, line: 0, seg: 0, t: 0, fallT: 0, doorT: 0, doorSide: 1,
+  p: [0, 0], v: [0, 0], j: [0, 0], F: [0, 0],
+  pos: [...START], target: null, walking: false, walkPhase: 0, sitting: -1,
+  events: [], npcs: [], seatOcc: [], stumble: 0, announced: false, finalBrake: null,
+  speed: 0, speedTarget: 0, travel: 0, bend: 0, shake: 0, fallDir: [0, 1], fallMax: 1.35,
+  lean: null, leanT: 9, assist: .3, near: false, doorLook: 0,
+  task: null, coffee: 1, results: [], boardQueue: [], leaveQueue: [], boardT: 0, pendingSeat: -1, rnd: Math.random,
+  lineStumbled: false, lineFalls: 0, bumps: 0, snap: null, crowdDirty: false, seatsDirty: false,
+  starsByLine: [], lastStars: 0, falls: 0, misses: 0, rescues: 0,
+  score: 0, free: 0, mult: 1, knocked: 0,
+};
+// Tutunmama çarpanı: yaslanmadan, oturmadan, tökezlemeden geçen her 4 saniye çarpanı bir artırır (en çok ×5).
+// Yaslanınca ya da tökezleyince ×1'e döner. Az kalsın anı çarpanla ödüllendirilir.
+const MULT_STEP = 4, MULT_MAX = 5, BEST_KEY = "denge-rekor-1";
+let best = {}; try { best = JSON.parse(localStorage.getItem(BEST_KEY) || "{}"); } catch (e) {}
+const curLine = () => LINES[G.line];
+const curSeg = () => curLine().seg[G.seg];
+
+function rng(seed) { // mulberry32
+  return () => { seed |= 0; seed = seed + 0x6D2B79F5 | 0; let t = Math.imul(seed ^ seed >>> 15, 1 | seed);
+    t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; };
+}
+const clone = (o) => JSON.parse(JSON.stringify(o));
+const npc = (x, z, extra = {}) => ({
+  x, z, p: [0, 0], v: [0, 0], phase: G.rnd() * 6, bumped: false, fade: 1, state: "stand", goal: null,
+  speed: NPC_SPEED, alightAt: -1, inT: 1, outT: 0, wp: 0, wait: 0, elder: false, toSeat: -1, exitSide: 0,
+  color: NPC_COLORS[Math.floor(G.rnd() * NPC_COLORS.length)], ...extra,
+});
+const spotFree = (x, z, skip) => {
+  const pt = [x, z];
+  if (pushStatic(pt, BODY_R)) return false;
+  if (Math.hypot(x - G.pos[0], z - G.pos[1]) < 2 * BODY_R + .05) return false;
+  return !G.npcs.some((n) => n !== skip && (Math.hypot(n.x - x, n.z - z) < 2 * BODY_R + .02 || (n.goal && Math.hypot(n.goal[0] - x, n.goal[1] - z) < 2 * BODY_R + .02)));
+};
+// Merkez çevresinde boş bir duracak yer bulur.
+function findSpot(cx, cz, rad, skip, radZ = rad) {
+  for (let i = 0; i < 300; i++) {
+    const x = cx + (G.rnd() * 2 - 1) * Math.min(rad, 1), z = cz + (G.rnd() * 2 - 1) * radZ;
+    if (!PINCH(z) && spotFree(x, z, skip)) return [x, z];
+  }
+  return null;
+}
+
+function startLine(li) {
+  const line = LINES[li];
+  G.line = li; G.seg = 0; G.rnd = rng(31 + li * 7);
+  G.lineStumbled = false; G.lineFalls = 0; G.bumps = 0; G.results = []; G.score = 0; G.free = 0; G.mult = 1;
+  G.pos = [...START]; G.sitting = -1; G.pendingSeat = -1; G.npcs = [];
+  // Koltuklar dolu ya da boş; ayakta duranların çoğu oyuncunun çevresinde. Bazıları ara duraklarda inecek.
+  G.seatOcc = SEATS.map(() => (G.rnd() < line.seat ? { color: NPC_COLORS[Math.floor(G.rnd() * NPC_COLORS.length)] } : null));
+  const around = Math.ceil(line.crowd * .6);
+  for (let k = 0; k < line.crowd; k++) {
+    const s = k < around ? findSpot(START[0], START[1], 1.5) : findSpot(0, 0, 1, null, 8.5);
+    if (!s) continue;
+    const n = npc(s[0], s[1]);
+    if (G.rnd() < .5) n.alightAt = Math.floor(G.rnd() * (line.seg.length - 1));
+    G.npcs.push(n);
+  }
+  G.crowdDirty = G.seatsDirty = true;
+  startSeg();
+  flash(`Senin durağın: ${line.seg[line.seg.length - 1].to}`, C.sign, 1800);
+}
+
+// Her yol başında durum saklanır; düşersen ya da durağı kaçırırsan bu yolun başından devam edersin.
+function startSeg(restored = false) {
+  const seg = curSeg(), tpl = SEGS[seg.tpl];
+  G.t = 0; G.state = "ride"; G.stumble = 0; G.announced = false; G.near = false; G.doorLook = 0;
+  G.p = [0, 0]; G.v = [0, 0]; G.speed = 0; G.speedTarget = 0; G.target = null; G.walking = false;
+  G.lean = null; G.leanT = 9; G.fallMax = 1.35; G.boardQueue = []; G.leaveQueue = []; G.doorSide = seg.side;
+  if (G.dozer) G.dozer.n.dozer = false;
+  G.dozer = null; G.sitT = 0;
+  G.events = tpl.ev.map((e) => ({ ...e, warned: false, thud: false }));
+  G.segTravel0 = G.travel;
+  G.finalBrake = G.events.filter((e) => e.k === "brake").pop();
+  if (!restored) {
+    G.task = seg.task ? { type: seg.task, ok: null, seat: -1, rival: false } : null;
+    if (G.task && G.task.type === "koltuk") {
+      if (G.pendingSeat < 0) G.pendingSeat = pickSeat(); // ilk yolda koltuk sessizce boşalır
+      G.task.seat = G.pendingSeat; G.seatOcc[G.task.seat] = null; G.seatsDirty = true;
+    }
+    G.pendingSeat = -1;
+    G.snap = clone({ npcs: G.npcs, seatOcc: G.seatOcc, pos: G.pos, sitting: G.sitting, task: G.task, score: G.score });
+  }
+  G.coffee = 1;
+  buildProps();
+  setLed(G.line === 0 && G.seg === 0 ? "Yürümek için yere dokun" : (seg.mine ? `Senin durağın: ${seg.to}` : `Sıradaki durak: ${seg.to}`));
+  setTask();
+}
+function restartSeg() {
+  const s = clone(G.snap);
+  G.npcs = s.npcs; G.seatOcc = s.seatOcc; G.pos = s.pos; G.sitting = s.sitting; G.task = s.task; G.score = s.score; G.free = 0; G.mult = 1;
+  G.crowdDirty = G.seatsDirty = true;
+  startSeg(true);
+}
+
+// Görev için boşalacak koltuk: oyuncunun önünde (kameradan görünür), ne çok yakın ne çok uzak, dolu bir koltuk.
+function pickSeat(far = false) {
+  let best = -1, score = -1;
+  SEATS.forEach(([x, z], i) => {
+    if (!SEAT_AISLE[i] || !G.seatOcc[i] || G.seatOcc[i] === "player") return;
+    const d = Math.hypot(x - G.pos[0], z - G.pos[1]);
+    const sc = -Math.abs(d - (far ? 3.5 : 2.6)) - (z > G.pos[1] - .8 ? 100 : 0);
+    if (d > 1.2 && (best < 0 || sc > score)) { best = i; score = sc; }
+  });
+  if (best < 0) best = SEATS.findIndex((_, i) => SEAT_AISLE[i] && G.seatOcc[i] !== "player");
+  return best;
+}
+// Koltuktaki yolcu kalkar ve kapıya yürür.
+function seatedLeaves(i, side) {
+  const occ = G.seatOcc[i]; if (!occ || occ === "player") return;
+  G.leaveQueue.push({ seat: i, side });
+}
+// Yeni nokta birine değiyorsa ve ona yaklaşıyorsa engel sayılır (zaten değen ikisi uzaklaşabilsin).
+const closing = (o, from, to, R) => {
+  const d1 = Math.hypot(o.x - to[0], o.z - to[1]);
+  return d1 < R && d1 < Math.hypot(o.x - from[0], o.z - from[1]) - 1e-5;
+};
+// Önü boşsa kalkar ve kapıya yürür; kapı kapanana kadar kalkamazsa sessizce iner.
+function processLeaves(force = false) {
+  G.leaveQueue = G.leaveQueue.filter(({ seat, side }) => {
+    const occ = G.seatOcc[seat]; if (!occ || occ === "player") return false;
+    const f = seatFront(seat);
+    const free = !hitsPerson(f, 2 * BODY_R) && (G.sitting >= 0 || Math.hypot(f[0] - G.pos[0], f[1] - G.pos[1]) >= 2 * BODY_R);
+    if (!free && !force) return true;
+    G.seatOcc[seat] = null; G.seatsDirty = true;
+    if (free) { const n = npc(f[0], f[1], { color: occ.color, look: occ.look, alightAt: G.seg }); G.npcs.push(n); G.crowdDirty = true; sendToDoor(n, side); }
+    return false;
+  });
+}
+function sendToDoor(n, side) {
+  const d = DOORS.reduce((a, b) => (Math.abs(b - n.z) < Math.abs(a - n.z) ? b : a));
+  n.goal = [side * (WALL_X - BODY_R), d]; n.state = "walk"; n.exitSide = side; n.speed = n.elder ? ELDER_SPEED : NPC_SPEED;
+}
+
+// ---------- Fizik adımı (çizimden ayrı, konsoldan test edilebilir) ----------
+function step(dt) {
+  if (G.state !== "ride" && G.state !== "doors") return;
+  const seg = curSeg(), tpl = SEGS[seg.tpl];
+  const h = dt * (G.stumble > 0 ? .6 : 1);
+  let fx = 0, fy = 0;
+
+  G.t += h;
+  if (G.state === "ride") {
+    for (const e of G.events) {
+      if (!e.warned && G.t >= e.t - 1.4) { e.warned = true; beep(e.k === "pot" ? 620 : 440, .09); buzz(25); }
+      if (G.t >= e.t && G.t <= e.t + e.d) {
+        const env = Math.min(1, (G.t - e.t) / .12) * Math.min(1, (e.t + e.d - G.t) / .2);
+        fx += e.v[0] * e.s * env; fy += e.v[1] * e.s * env;
+        if (e.k === "accel") G.speedTarget = 1;
+        if (e.k === "brake") G.speedTarget = e === G.finalBrake ? 0 : .4;
+        if (e.k === "pot" && !e.thud) { e.thud = true; thud(); buzz(50); G.shake = 1; }
+      } else if (e.k === "brake" && e !== G.finalBrake && G.t > e.t + e.d && G.speedTarget === .4) G.speedTarget = 1;
+    }
+    const sw = tpl.sway * .6 * G.speed; // yalnızca canlılık katar
+    fx += Math.sin(G.t * 1.3 + 1) * sw + Math.sin(G.t * 2.9) * sw * .5;
+    fy += Math.sin(G.t * 1.7 + 2) * sw * .8;
+    fx *= T.force; fy *= T.force;
+  }
+  G.F = [fx, fy];
+  G.speed += (G.speedTarget - G.speed) * Math.min(1, dt * 1.6);
+  G.travel += G.speed * dt * 14;
+
+  updateNpcs(h);
+  const walking = updateWalk(h);
+
+  if (G.sitting >= 0) {
+    // Oturan düşmez: denge sakinleşir.
+    G.p[0] *= 1 - Math.min(1, dt * 4); G.p[1] *= 1 - Math.min(1, dt * 4); G.v = [0, 0]; G.lean = null;
+  } else {
+    const wk = walking ? 1 : 0;
+    if (walking) { fx = fx * WALK_FORCE + Math.sin(G.walkPhase) * .9; fy = fy * WALK_FORCE + Math.cos(G.walkPhase * 2) * .3; }
+    // Gizli yardım: yalnızca doğru yöne çabalayana, zorlandıkça artar.
+    const m0 = Math.hypot(G.p[0], G.p[1]) || 1;
+    const effort = Math.max(0, Math.min(1, -(G.j[0] * G.p[0] + G.j[1] * G.p[1]) / m0 * 2));
+    const a = T.help ? G.assist * effort : 0;
+    fx *= 1 - .4 * a; fy *= 1 - .4 * a;
+    const k = T.recover * (1 + 1.5 * a) * (1 - (1 - WALK_RECOVER) * wk);
+    const edge = Math.max(0, m0 - .7) * 7 * (.5 + G.assist) * (T.help ? effort : 0);
+    G.v[0] += (-G.p[0] * k + fx + G.j[0] * T.gain - G.v[0] * DAMP - G.p[0] / m0 * edge) * h;
+    G.v[1] += (-G.p[1] * k + fy + G.j[1] * T.gain - G.v[1] * DAMP - G.p[1] / m0 * edge) * h;
+    G.p[0] += G.v[0] * h; G.p[1] += G.v[1] * h;
+
+    // Yaslanma: üst gövde bir yüzeye değerse orada durur; duvar, direk ya da kapı seni tutar.
+    // Bir yolcuya sertçe değmek çarpma sayılır.
+    const wasLean = G.lean; G.lean = null; G.leanT += dt;
+    for (const [nx, nz, d, who] of supports(G.pos[0], G.pos[1], G.state === "doors" ? G.doorSide : 0)) {
+      const lim = (d - SHOULDER_R) / LEAN_M, pn = G.p[0] * nx + G.p[1] * nz;
+      if (pn <= lim) continue;
+      G.p[0] -= nx * (pn - lim); G.p[1] -= nz * (pn - lim);
+      const vn = G.v[0] * nx + G.v[1] * nz;
+      if (vn > 0) { G.v[0] -= nx * vn; G.v[1] -= nz * vn; }
+      if (who) { if (vn > .7 && !who.bumped) bump(who); }
+      else G.lean = [nx, nz];
+    }
+    if (G.lean && !wasLean && G.leanT > 2 && Math.hypot(G.p[0], G.p[1]) > .35) { flash("YASLANDIN", C.safe); tone(300, .08, "triangle", .1); }
+    if (G.lean) G.leanT = 0;
+    const m = Math.hypot(G.p[0], G.p[1]);
+    G.assist = Math.min(1, Math.max(0, G.assist + (m > .7 ? .15 : -.02) * h));
+
+    // Az kalsın anı
+    if (m > .75 && G.stumble <= 0) G.near = true;
+    else if (G.near && m < .35) { G.near = false; const b = 50 * G.mult; G.score += b; flash(`AZ KALSIN! +${b}`, C.safe); beep(760, .08); }
+
+    if (G.stumble > 0) {
+      G.stumble -= dt;
+      if (m < .85) { G.stumble = 0; G.near = false; G.rescues++; flash("KURTARDIN!", C.safe); beep(880, .12); buzz(30); }
+      else if (G.stumble <= 0 || m > FALL_LIMIT) return fall();
+    } else if (m >= 1) {
+      loseMult();
+      G.stumble = STUMBLE_TIME; G.lineStumbled = true; G.target = null; G.assist = Math.min(1, G.assist + .25);
+      if (G.task && G.task.type === "kahve" && G.task.ok === null) G.coffee -= .2;
+      flash("DİKKAT!", C.danger); beep(180, .2); buzz(120);
+    }
+  }
+  updateTask(dt);
+  updateDozer(dt);
+  updateMult(dt);
+
+  if (G.state === "ride" && !G.announced && G.t >= tpl.dur - ANNOUNCE) {
+    G.announced = true; chime();
+    setLed(`${seg.mine ? "Senin durağın: " : ""}${seg.to} · Kapılar ${sideName(seg.side)} açılacak`, true);
+  }
+  if (G.state === "ride" && G.t >= tpl.dur) return openDoors();
+  if (G.state === "doors") {
+    if (seg.mine) {
+      if (G.sitting < 0 && inDoorZone(G.pos[0], G.pos[1], seg.side) && G.stumble <= 0) return arrive();
+      // Kapıya yaklaşmış olana kapı fark ettirmeden biraz daha açık kalır.
+      const dist = Math.min(...DOORS.map((d) => Math.hypot(seg.side * .8 - G.pos[0], d - G.pos[1])));
+      G.doorT -= dt * (T.help && dist < 1.6 ? .45 : 1);
+      if (G.doorT <= 0) return missed();
+    } else {
+      G.doorT -= dt;
+      if (G.doorT <= 0) closeDoors();
+    }
+  }
+}
+
+// İnmeyecek olanlar kapı ağzından bir adım çekilir (inenlere yol açılır).
+function clearDoorways(side) {
+  for (const n of G.npcs) {
+    if (n.state !== "stand" || n.exitSide || n.rival || n.dozer || !inDoorZone(n.x, n.z, side)) continue;
+    const d = DOORS.reduce((a, b) => (Math.abs(b - n.z) < Math.abs(a - n.z) ? b : a)), dir = Math.sign(n.z - d) || 1;
+    let spot = null;
+    for (const dz of [.75, 1, 1.3, -.75, -1, -1.3]) for (const x of [.85, .5, .2]) {
+      const z = d + dir * dz;
+      if (!spot && !inDoorZone(x, z, side) && !PINCH(z) && spotFree(x, z, n)) spot = [x, z];
+    }
+    if (spot) Object.assign(n, { state: "walk", goal: spot, speed: NPC_SPEED, toSeat: -1 });
+  }
+}
+function openDoors() {
+  const seg = curSeg(), line = curLine();
+  G.state = "doors"; G.doorT = seg.mine ? DOOR_OPEN : STOP_TIME; G.doorSide = seg.side;
+  doorSound();
+  setLed(seg.mine ? "Kapılar açıldı · İn!" : `${seg.to} · Kapılar açıldı`, true);
+  finishTask();
+  // İnecekler kapıya yürür. Senin durağında inen başkaları da olabilir: kapıda yarışırsın.
+  for (const n of G.npcs) if (n.alightAt === G.seg && n.state === "stand") sendToDoor(n, seg.side);
+  clearDoorways(seg.side);
+  if (seg.mine) return;
+  // Sonraki yolun görevine göre biri koltuktan kalkar, biri biner.
+  const next = line.seg[G.seg + 1];
+  if (next && next.task === "koltuk") { G.pendingSeat = pickSeat(); seatedLeaves(G.pendingSeat, seg.side); }
+  if (next && next.task === "yasli") {
+    const s = pickSeat(true); seatedLeaves(s, seg.side);
+    G.boardQueue.push({ elder: true, toSeat: s });
+  }
+  for (let k = 0; k < (seg.board || 0); k++) {
+    const at = G.seg + 1 + Math.floor(G.rnd() * (line.seg.length - G.seg - 1)); // ilerideki bir durakta inecek
+    G.boardQueue.push({ alightAt: at });
+  }
+  G.boardT = .4;
+}
+function closeDoors() {
+  // Kapı kapanınca binemeyen kalır, inemeyen bir sonraki durağa kadar devam eder.
+  G.boardQueue = []; processLeaves(true);
+  G.npcs = G.npcs.filter((n) => n.state !== "exit" && n.state !== "board");
+  for (const n of G.npcs) if (n.exitSide) { n.exitSide = 0; n.goal = null; n.state = "stand"; n.alightAt = -1; }
+  // Görevi biten yolda hâlâ koltuğuna varamamış amca kapı kapanırken oturmuş sayılır.
+  if (curSeg().task === "yasli") for (const n of G.npcs) if (n.elder && n.toSeat >= 0 && !G.seatOcc[n.toSeat]) { G.seatOcc[n.toSeat] = { color: n.color, elder: true, look: n.look }; n.gone = true; G.seatsDirty = true; }
+  G.npcs = G.npcs.filter((n) => !n.gone);
+  G.crowdDirty = true;
+  doorSound();
+  G.seg++;
+  startSeg();
+}
+
+// ---------- Yolcular: duran, yürüyen, binen, inen ----------
+function updateNpcs(h) {
+  const seg = curSeg();
+  // Binenler kapı boşluğundan girer; kapının önü doluysa bekler.
+  if (G.state === "doors" && G.leaveQueue.length) processLeaves();
+  if (G.state === "doors" && G.boardQueue.length) {
+    G.boardT -= h;
+    if (G.boardT <= 0) {
+      const b = G.boardQueue[0];
+      // Amca oyuncunun arkasındaki en yakın kapıdan biner, önündeki koltuğa giderken onun yanından geçer.
+      const behind = DOORS.filter((z) => z > G.pos[1] + .8);
+      const d = b.elder ? (behind.length ? Math.min(...behind) : DOORS[DOORS.length - 1]) : DOORS[(G.boardQueue.length + G.seg) % DOORS.length];
+      const pt = [seg.side * (WALL_X - BODY_R), d];
+      if (!G.npcs.some((o) => Math.hypot(o.x - pt[0], o.z - pt[1]) < 2 * BODY_R) && Math.hypot(pt[0] - G.pos[0], pt[1] - G.pos[1]) >= 2 * BODY_R) {
+        G.boardQueue.shift();
+        const n = npc(pt[0], pt[1], { state: "board", inT: 0, alightAt: b.alightAt ?? -1, boardSide: seg.side });
+        if (b.elder) Object.assign(n, { elder: true, toSeat: b.toSeat, color: ELDER.color, speed: ELDER_SPEED });
+        G.npcs.push(n); G.crowdDirty = true; G.boardT = .7;
+      } else G.boardT = .2;
+    }
+  }
+  let removed = false;
+  for (const n of G.npcs) {
+    if (n.state === "board") {
+      n.inT += h / .6;
+      if (n.inT >= 1) {
+        n.inT = 1; n.state = "walk"; n.goal = n.elder ? seatFront(n.toSeat) : chooseSpot(n); n.speed = n.elder ? ELDER_SPEED : NPC_SPEED;
+        // Amca önce oyuncunun durduğu yere yürür: kenara çekilmezsen geçemez.
+        // Önce koridora çıkar, sonra oyuncunun durduğu yerden geçer: kenara çekilmezsen geçemez.
+        if (n.elder) {
+          n.path = [[n.boardSide * .25, n.z]];
+          if (G.sitting < 0) n.path.push([G.pos[0], G.pos[1]]);
+          n.goal = n.path.shift(); n.via = true;
+        }
+        if (!n.goal) n.state = "stand";
+      }
+    } else if (n.state === "exit") {
+      n.outT += h / .6;
+      if (n.outT >= 1) { n.gone = true; removed = true; }
+    } else if (n.state === "walk") moveNpc(n, h);
+  }
+  if (removed) { G.npcs = G.npcs.filter((n) => !n.gone); G.crowdDirty = true; }
+}
+// Binen yolcu ya oyuncunun çevresine ya da ineceği kapının yakınına yerleşir.
+function chooseSpot(n) {
+  const line = curLine(), at = line.seg[n.alightAt];
+  if (at && G.rnd() < .55) {
+    const d = DOORS[Math.floor(G.rnd() * DOORS.length)];
+    const s = findSpot(at.side * .55, d, .7, n); if (s) return s;
+  }
+  return findSpot(G.pos[0], G.pos[1], 1.4, n) || findSpot(0, 0, 1, n, 8.5);
+}
+function moveNpc(n, h) {
+  if (n.via && Math.hypot(n.goal[0] - n.x, n.goal[1] - n.z) < .25) {
+    if (n.path && n.path.length) n.goal = n.path.shift(); else { n.via = false; n.goal = seatFront(n.toSeat); }
+  }
+  // İlerleyemeyen (direkle duvar arasına sıkışan gibi) koridorun ortasından dolaşır.
+  const gd = Math.hypot(n.goal[0] - n.x, n.goal[1] - n.z);
+  const gk = n.goal[0].toFixed(2) + "," + n.goal[1].toFixed(2);
+  if (n.goalKey !== gk) { n.goalKey = gk; n.bestD = 9; n.noProg = 0; n.detour = null; n.bestAll = 9; n.slowT = 0; }
+  // Kalabalıkta hedefine uzun süre yaklaşamayan yolcu olduğu yerde durur.
+  if (gd < (n.bestAll ?? 9) - .05) { n.bestAll = gd; n.slowT = 0; } else n.slowT = (n.slowT || 0) + h;
+  if (n.slowT > 4 && !n.exitSide && !n.elder && !n.rival && !n.via) {
+    const s2 = PINCH(n.z) && (n.relocs = (n.relocs || 0) + 1) <= 2 && findSpot(n.x, n.z, 1, n, 2.5); // dar yerde kalmaz, yakındaki açıklığa geçer
+    if (s2) { n.goal = s2; return; }
+    n.state = "stand"; n.goal = null; n.toSeat = -1; n.slowT = 0; return;
+  }
+  if (!n.detour) {
+    if (gd < (n.bestD ?? 9) - .04) { n.bestD = gd; n.noProg = 0; } else n.noProg = (n.noProg || 0) + h;
+    // Biri yolunu kesiyorsa dolaşmaz, yol ister (amca da sen çekilene kadar bekler).
+    if (n.via || !n.staticHit) n.noProg = 0;
+    if (n.noProg > .6) { n.detour = [AISLE_X - Math.sign(n.x - AISLE_X) * .05, n.z + Math.sign(n.goal[1] - n.z) * .35]; n.noProg = 0; n.bestD = 9; }
+  }
+  if (n.detour && (Math.hypot(n.detour[0] - n.x, n.detour[1] - n.z) < .12 || (n.detourT = (n.detourT || 0) + h) > 3)) { n.detour = null; n.detourT = 0; n.bestD = 9; }
+  const aim = n.detour || n.goal;
+  const dx = aim[0] - n.x, dz = aim[1] - n.z, d = Math.hypot(dx, dz);
+  if (!n.detour && d < .06) { n.bestD = 9; return npcArrived(n); }
+  const ux = dx / d, uz = dz / d, s = Math.min(d, n.speed * h);
+  let blockedByPlayer = false;
+  for (const k of [0, 1, -1]) { // önce düz, olmazsa iki yana kayarak
+    const pt = [n.x + (k ? ux * .4 - uz * k * .9 : ux) * s, n.z + (k ? uz * .4 + ux * k * .9 : uz) * s];
+    const pushed = pushStatic(pt, BODY_R), prog = ((pt[0] - n.x) * ux + (pt[1] - n.z) * uz) / s;
+    if (Math.hypot(pt[0] - n.x, pt[1] - n.z) < s * .3) { if (!k) n.staticHit = true; continue; } // duvar, direk ya da koltuk ilerletmiyor
+    if (!k) n.staticHit = pushed && prog < .5; // engelin kenarında kayıyor ama hedefe yaklaşmıyor
+    if (G.sitting < 0 && closing({ x: G.pos[0], z: G.pos[1] }, [n.x, n.z], pt, 2 * BODY_R)) { blockedByPlayer = true; continue; }
+    let ok = true;
+    for (const o of solidNpcs()) {
+      if (o === n || !closing(o, [n.x, n.z], pt, 2 * BODY_R)) continue;
+      const ox = o.x - pt[0], oz = o.z - pt[1], od = Math.hypot(ox, oz) || 1;
+      if (o.state !== "stand" || !stepAside(o, ox / od, oz / od, h) || Math.hypot(o.x - pt[0], o.z - pt[1]) < 2 * BODY_R - .01) { ok = false; break; }
+    }
+    if (!ok) continue;
+    n.x = pt[0]; n.z = pt[1]; n.wp += s * 9; n.wait = 0; n.stuck = Math.max(0, (n.stuck || 0) - h * 2);
+    return;
+  }
+  n.wait += h; n.stuck = (n.stuck || 0) + h;
+  // Uzun süre yol bulamayan, inecek ya da yaşlı değilse olduğu yerde kalır.
+  if (n.stuck > 2.5 && !n.exitSide && !n.elder && !n.rival) { n.state = "stand"; n.goal = null; n.toSeat = -1; n.stuck = 0; return; }
+  if (blockedByPlayer && n.wait > .7 && !(n.rival && G.task && G.task.fight)) {
+    n.wait = 0;
+    if (n.elder) { flash("YOL VER!", C.sign); tone(260, .15, "triangle", .1); }
+    else { G.v[0] += ux * .9; G.v[1] += uz * .9; flash("MÜSAADE!", C.sign); tone(440, .06, "triangle", .1); buzz(30); }
+  }
+}
+function npcArrived(n) {
+  if (n.rival && G.task && G.task.fight) return; // kapışma sürerken oturamaz, koltuğun önünde direnir
+  if (n.exitSide) { n.state = "exit"; n.outT = 0; return; }
+  if (n.toSeat >= 0) { // koltuğa oturur
+    const i = n.toSeat;
+    if (!G.seatOcc[i]) {
+      G.seatOcc[i] = { color: n.color, elder: n.elder, look: n.look }; G.seatsDirty = true;
+      n.gone = true; G.npcs = G.npcs.filter((o) => !o.gone); G.crowdDirty = true;
+      if (G.task && G.task.ok === null) {
+        if (G.task.type === "yasli" && n.elder) taskDone(true, "SAĞ OL EVLADIM!");
+        if (G.task.type === "koltuk" && i === G.task.seat) {
+          taskDone(false, "KOLTUK KAPILDI");
+          for (const o of G.npcs) if (o.toSeat === i) Object.assign(o, { toSeat: -1, goal: null, state: "stand", rival: false });
+        }
+      }
+      return;
+    }
+    n.toSeat = -1;
+  }
+  n.state = "stand"; n.goal = null;
+}
+
+// ---------- Görevler ----------
+function updateTask(dt) {
+  G.spilling = 0; // dökülme yalnızca sarsılırken sürer, sakinleşince durur
+  const t = G.task; if (!t || t.ok !== null) return;
+  if (t.type === "kahve") {
+    // Sert yalpa ve hızlı savrulma kahveyi döker; yürürken bardak daha hassastır.
+    const m = Math.hypot(G.p[0], G.p[1]), v = Math.hypot(G.v[0], G.v[1]), w = G.walking ? 1.4 : 1;
+    const spill = (Math.max(0, m * SHOW * w - .62) * .4 + Math.max(0, v * w - .62) * .4) * dt;
+    G.coffee -= spill; G.spilling = spill / dt;
+    if (G.coffee < .35) taskDone(false, "KAHVE DÖKÜLDÜ!");
+  } else if (t.type === "koltuk") {
+    const f = seatFront(t.seat), dist = (x, z) => Math.hypot(x - f[0], z - f[1]);
+    const pd = dist(G.pos[0], G.pos[1]);
+    // Rakip: koltuğa yakın duran biri. Sen yaklaşınca, aşağı yukarı seninle aynı anda varacağı an yürür; koltuğun önünde karşılaşırsınız.
+    if (!t.rival && G.t > .8) {
+      const all = G.npcs.filter((n) => n.state === "stand" && !n.elder && !n.dozer && n.alightAt !== G.seg && dist(n.x, n.z) > .45);
+      const cand = all.sort((a, b) => dist(a.x, a.z) - dist(b.x, b.z))[0];
+      if (cand) { t.rival = true; cand.rival = true; cand.toSeat = t.seat; cand.rivalWait = true; }
+    }
+    const r = G.npcs.find((n) => n.rival && n.toSeat === t.seat);
+    if (r && r.rivalWait && G.sitting < 0 && pd < dist(r.x, r.z) * (WALK_SPEED / RIVAL_SPEED) + .6) {
+      // Uzaktaysa koşturur: seninle aşağı yukarı aynı anda varacak hızda.
+      const sp = Math.min(1.25, Math.max(.5, dist(r.x, r.z) / (pd / WALK_SPEED + .1)));
+      Object.assign(r, { rivalWait: false, goal: [...f], state: "walk", speed: sp, stuck: 0 });
+      flash("!", C.danger);
+    }
+    // Kapışma: ikiniz de koltuğun önündeyken kimse oturamaz. Rakip seni omuzlar; sen telefonu ona doğru eğip ağırlığını ona verirsin.
+    // İttikçe sen kazanırsın, bırakırsan o kazanır. Fazla eğilirsen dengen gider.
+    if (r && !r.rivalWait && G.sitting < 0 && pd < 1 && dist(r.x, r.z) < 1 && Math.hypot(r.x - G.pos[0], r.z - G.pos[1]) < (t.fight ? 1.1 : .75)) {
+      if (!t.fight) { t.fight = true; t.win = 0; t.shoveT = .5; flash("KAPIŞ!", C.sign); tone(300, .08, "square", .07); }
+      const dx = r.x - G.pos[0], dz = r.z - G.pos[1], d = Math.hypot(dx, dz) || 1;
+      const push = Math.min(1, Math.max(0, (G.p[0] * dx + G.p[1] * dz) / d) * 2); // ağırlığını ona verdiğin kadar
+      t.win = Math.min(1, t.win + (push * 1.5 - .4) * dt);
+      r.v[0] -= dx / d * push * 2 * dt; r.v[1] -= dz / d * push * 2 * dt; // ittikçe o yalpalar
+      t.shoveT -= dt;
+      if (t.shoveT <= 0) {
+        t.shoveT = .85 + G.rnd() * .3;
+        G.v[0] -= dx / d * 1.1; G.v[1] -= dz / d * 1.1; r.v[0] += dx / d * .6; r.v[1] += dz / d * .6;
+        flash("BENİM!", C.danger); tone(200, .1, "square", .08); buzz(40);
+      }
+      if (t.win >= 1) {
+        // Rakip geri sendeler ve vazgeçer
+        t.fight = false;
+        const pt = [r.x + dx / d * .45, r.z + dz / d * .45]; pushStatic(pt, BODY_R);
+        if (!hitsPerson(pt, 2 * BODY_R, r)) { r.x = pt[0]; r.z = pt[1]; }
+        Object.assign(r, { rival: false, toSeat: -1, goal: null, state: "stand" });
+        r.v[0] += dx / d * 2.5; r.v[1] += dz / d * 2.5;
+        const b = 80 * G.mult; G.score += b; flash(`YER BENİM! +${b}`, C.safe); beep(700, .08); buzz(30);
+      } else if (t.win <= -1) {
+        // Rakip koltuğa çöker
+        t.fight = false;
+        G.seatOcc[t.seat] = { color: r.color, look: r.look }; G.seatsDirty = true;
+        G.npcs = G.npcs.filter((n) => n !== r); G.crowdDirty = true;
+        return taskDone(false, "KOLTUK KAPILDI");
+      }
+    } else t.fight = false;
+    if (G.sitting < 0 && G.stumble <= 0 && !G.seatOcc[t.seat] && pd < .2 && !t.fight) {
+      G.sitting = t.seat; G.seatOcc[t.seat] = "player"; G.target = null; G.seatsDirty = true; G.sitT = 0;
+      for (const n of G.npcs) if (n.toSeat === t.seat) Object.assign(n, { toSeat: -1, goal: null, state: "stand", rival: false });
+      taskDone(true, "OTURDUN!");
+    }
+  }
+}
+function taskDone(ok, msg) {
+  if (G.task) G.task.fight = false;
+  G.task.ok = ok; G.results[G.seg] = ok;
+  flash(msg, ok ? C.safe : C.danger, 1100); ok ? (beep(660, .08), setTimeout(() => beep(990, .12), 90)) : tone(160, .3, "sawtooth", .08);
+  setTask();
+}
+function finishTask() {
+  const t = G.task; if (!t || t.ok !== null) return;
+  if (t.type === "kahve") taskDone(true, "KAHVE SAĞLAM!");
+  else taskDone(false, t.type === "koltuk" ? "KOLTUK BOŞ KALDI" : "AMCA AYAKTA KALDI");
+  // Görev bitse de amca yolu kesmeye devam etmesin: koltuğuna dolaşarak gider.
+  for (const n of G.npcs) if (n.elder && n.via) { n.via = false; n.path = []; n.goal = seatFront(n.toSeat); }
+  for (const n of G.npcs) if (n.rival) { if (n.rivalWait) n.toSeat = -1; n.rival = n.rivalWait = false; }
+}
+
+// Dokunulan yere yürür. Önüne biri çıkarsa "pardon" der, ikiniz ayrı yanlara kayarak geçersiniz.
+function updateWalk(h) {
+  if (!G.target || G.stumble > 0 || G.state === "fallen") { G.walking = false; return false; }
+  if (G.sitting >= 0) { // ayağa kalkar; koltuğun önü doluysa yanındaki boşluğa
+    const [fx, fz] = seatFront(G.sitting), free = (x, z) => !pushStatic([x, z], BODY_R) && !hitsPerson([x, z], 2 * BODY_R + .02);
+    let opt = [[fx, fz], [fx, fz - .62], [fx, fz + .62], [fx * .2, fz], [fx * .2, fz - .62], [fx * .2, fz + .62]].find(([x, z]) => free(x, z));
+    if (!opt && G.standTry > .8) { // sıkışıklıkta biraz ötedeki ilk boşluğa kalkar
+      let bd = 9;
+      for (let ix = -4; ix <= 4; ix++) for (let iz = -6; iz <= 6; iz++) {
+        const x = AISLE_X + ix * .15, z = fz + iz * .15, dd = Math.hypot(x - fx, z - fz);
+        if (dd < bd && dd < 1.1 && free(x, z)) { bd = dd; opt = [x, z]; }
+      }
+    }
+    if (!opt) { // önündekiler biraz çekilir; olmazsa vazgeçer
+      for (const n of solidNpcs()) {
+        const ox = n.x - fx, oz = n.z - fz, od = Math.hypot(ox, oz);
+        if (n.state === "stand" && od < 2 * BODY_R + .1) stepAside(n, od > .01 ? ox / od : 0, od > .01 ? oz / od : 1, h * 3);
+      }
+      if (!G.standTry) flash("MÜSAADE!", C.sign);
+      G.standTry = (G.standTry || 0) + h;
+      if (G.standTry > 1.5) { G.target = null; G.standTry = 0; flash("ÖNÜN DOLU", C.sign); }
+      return false;
+    }
+    G.standTry = 0; G.pos = [...opt];
+    G.seatOcc[G.sitting] = null; G.sitting = -1; G.seatsDirty = true;
+  }
+  const tx = G.target[0] - G.pos[0], tz = G.target[1] - G.pos[1];
+  if (Math.hypot(tx, tz) < .05) { G.target = null; G.walking = false; return false; }
+  // Uzak hedefe koridorun ortasından gidilir: koltuk sıralarına ve boşluklara takılmaz. Koridor tıkalıysa doğrudan dener.
+  let aim = G.target;
+  if (Math.abs(tz) > .7) aim = Math.abs(G.pos[0] - AISLE_X) > .2 ? [AISLE_X, G.pos[1] + Math.sign(tz) * .25] : [AISLE_X, G.target[1]];
+  return walkToward(aim, h) || (aim !== G.target && walkToward(G.target, h));
+}
+function walkToward(aim, h) {
+  const dx = aim[0] - G.pos[0], dz = aim[1] - G.pos[1], d = Math.max(1e-3, Math.hypot(dx, dz));
+  const ux = dx / d, uz = dz / d, R = 2 * BODY_R;
+  const m = Math.hypot(G.p[0], G.p[1]);
+  const s = Math.min(d, WALK_SPEED * (1 - .5 * Math.min(1, m * SHOW)) * h);
+  const pt = [G.pos[0] + ux * s, G.pos[1] + uz * s];
+  for (const n of solidNpcs()) {
+    const ox = pt[0] - n.x, oz = pt[1] - n.z;
+    if (Math.hypot(ox, oz) >= R) continue;
+    if (!n.bumped) bump(n, ux, uz);
+    const dot = -uz * ox + ux * oz; // yan = (-uz, ux)
+    const side = Math.abs(dot) > .05 ? Math.sign(dot) : (Math.sign(-uz * -pt[0]) || 1); // kararsızsa koridor ortasına
+    pt[0] += -uz * side * s; pt[1] += ux * side * s;
+    if (n.state === "stand") {
+      const ax = n.x - pt[0] + uz * side, az = n.z - pt[1] - ux * side, ad = Math.hypot(ax, az) || 1;
+      stepAside(n, ax / ad, az / ad, h); // senden uzağa ve öbür yana
+    }
+    const qx = pt[0] - n.x, qz = pt[1] - n.z, qd = Math.hypot(qx, qz) || 1;
+    if (qd < R) { pt[0] = n.x + qx / qd * R; pt[1] = n.z + qz / qd * R; }
+  }
+  pushStatic(pt, BODY_R);
+  if (solidNpcs().some((n) => closing(n, G.pos, pt, R - .01))) { G.walking = false; return false; }
+  const moved = Math.hypot(pt[0] - G.pos[0], pt[1] - G.pos[1]);
+  G.pos = pt; G.walkPhase += moved * 9; G.walking = moved > s * .2;
+  return G.walking;
+}
+// Yolcu yol verir: kayar ama koltuğa, direğe, başkasına girmez. Önü doluysa öndekini de biraz iter.
+function stepAside(n, px, pz, h, depth = 0) {
+  const pt = [n.x + px * .9 * h, n.z + pz * .9 * h];
+  pushStatic(pt, BODY_R);
+  if (G.sitting < 0 && closing({ x: G.pos[0], z: G.pos[1] }, [n.x, n.z], pt, 2 * BODY_R - .02)) return false;
+  for (const o of solidNpcs()) {
+    if (o === n || !closing(o, [n.x, n.z], pt, 2 * BODY_R)) continue;
+    const ox = o.x - pt[0], oz = o.z - pt[1], od = Math.hypot(ox, oz) || 1;
+    if (o.state !== "stand" || depth >= 2 || !stepAside(o, ox / od, oz / od, h, depth + 1)) return false;
+    if (Math.hypot(o.x - pt[0], o.z - pt[1]) < 2 * BODY_R - .01) return false;
+  }
+  n.x = pt[0]; n.z = pt[1];
+  return true;
+}
+// Oturunca yanında ayakta biri uyuklar ve yavaşça üstüne devrilir; sarsıntı bunu hızlandırır.
+// Telefonu koridora doğru eğerek onu dik tutarsın. Üstüne yığılırsa çarpan sıfırlanır, puan düşer, itip uyandırman gerekir.
+function updateDozer(dt) {
+  if (G.sitting < 0) { if (G.dozer) { G.dozer.n.dozer = false; G.dozer = null; } G.sitT = 0; return; }
+  const spot = seatFront(G.sitting), sx = Math.sign(SEATS[G.sitting][0] - spot[0]); // sx: koltuğun koridora göre yönü
+  if (!G.dozer) {
+    G.sitT = (G.sitT || 0) + dt;
+    if (G.sitT < 2.5) return;
+    G.sitT = -6; // kimse bulunamazsa bir süre sonra yeniden dener
+    if (pushStatic([...spot], BODY_R) || hitsPerson(spot, 2 * BODY_R + .02)) return;
+    const all = G.npcs.filter((n) => n.state === "stand" && !n.elder && !n.rival && !n.exitSide && n.alightAt !== G.seg);
+    const n = all.sort((a, b) => Math.hypot(a.x - spot[0], a.z - spot[1]) - Math.hypot(b.x - spot[0], b.z - spot[1]))[0];
+    if (!n) return;
+    Object.assign(n, { goal: spot, state: "walk", dozer: true, stuck: 0 });
+    G.dozer = { n, a: 0, down: false, wake: 0 };
+    return;
+  }
+  const d = G.dozer, n = d.n;
+  if (!G.npcs.includes(n) || n.exitSide) { n.dozer = false; G.dozer = null; return; }
+  if (n.state !== "stand") return;
+  if (Math.hypot(n.x - spot[0], n.z - spot[1]) > .35) { n.dozer = false; G.dozer = null; return; } // başka yerde durdu
+  const push = Math.max(0, -sx * G.j[0]);
+  const jolt = Math.max(0, sx * G.F[0]) * .06 + Math.hypot(G.F[0], G.F[1]) * .015;
+  if (d.down) {
+    d.wake = Math.max(0, d.wake + (push * 1.6 - .5) * dt);
+    if (d.wake >= 1) { d.down = false; d.a = .15; d.wake = 0; flash("UYAN!", C.safe); beep(620, .08); }
+  } else {
+    d.a = Math.max(0, Math.min(1, d.a + (.09 + jolt - push * 1.1) * dt));
+    if (d.a >= 1) { d.down = true; d.wake = 0; loseMult(); G.score = Math.max(0, G.score - 50); flash("HORR...", C.danger); tone(90, .5, "sawtooth", .06); buzz(60); }
+  }
+}
+function updateMult(dt) {
+  if (G.stumble > 0) return;
+  if (G.sitting >= 0 && G.dozer && G.dozer.down) return; // uyuklayan üstüne yığılınca puan durur
+  if (G.lean) { loseMult(); return; }
+  G.free += dt;
+  const m = Math.min(MULT_MAX, 1 + Math.floor(G.free / MULT_STEP));
+  if (m > G.mult) { G.mult = m; G.multPop = true; tone(500 + m * 90, .07, "triangle", .08); }
+  G.score += dt * 10 * G.mult;
+}
+function loseMult() {
+  if (G.mult > 1) { G.multLost = 1; tone(220, .12, "triangle", .08); }
+  G.mult = 1; G.free = 0;
+}
+function bump(n, ux = 0, uz = 0) {
+  n.bumped = true; G.bumps++; G.v[0] += ux * .7; G.v[1] += uz * .7; loseMult();
+  { const dx = n.x - G.pos[0], dz = n.z - G.pos[1], d = Math.hypot(dx, dz) || 1; n.v[0] += dx / d * 1.2; n.v[1] += dz / d * 1.2; } // çarpılan sendeler
+  flash("PARDON!", C.sign); tone(520, .07, "triangle", .12); tone(390, .1, "triangle", .1, .08); buzz(40);
+}
+
+function arrive() {
+  const line = curLine();
+  finishTask();
+  const tasksOk = line.seg.every((s, i) => !s.task || G.results[i] === true);
+  const stars = 1 + (tasksOk ? 1 : 0) + (!G.lineStumbled && !G.lineFalls ? 1 : 0);
+  G.starsByLine[G.line] = Math.max(G.starsByLine[G.line] || 0, stars);
+  G.lastStars = stars; G.state = "arrived";
+  const sc = Math.floor(G.score); G.newBest = sc > (best[G.line] || 0);
+  if (G.newBest) { best[G.line] = sc; try { localStorage.setItem(BEST_KEY, JSON.stringify(best)); } catch (e) {} }
+  setLed("İyi yolculuklar"); setTask();
+  beep(660, .1); setTimeout(() => beep(990, .16), 120);
+  setTimeout(showArrived, 900);
+}
+
+function missed() {
+  G.state = "missed"; G.misses++;
+  setLed("Kapılar kapanıyor"); doorSound();
+  setTimeout(() => showEnd("Durağı kaçırdın", MISS_LINES[G.misses % MISS_LINES.length]), 900);
+}
+
+function fall() {
+  const m = Math.hypot(G.p[0], G.p[1]) || 1;
+  G.fallDir = [G.p[0] / m, G.p[1] / m];
+  // Önü kapalıysa koridor boyunca düşer; açı da boş yere göre sınırlanır, kimsenin ya da hiçbir şeyin içine girmez.
+  const [x, z] = G.pos, fd = G.fallDir, sz = Math.sign(fd[1]) || 1;
+  const opts = [fd, [0, sz], [0, -sz]].map((u) => ({ u, f: freeDist(x, z, u[0], u[1]) }));
+  // Önünde biri varsa ona doğru düşer (domino); yoksa boş yere.
+  const best = opts[0].f >= 1.4 || nextInLine([x, z], fd) ? opts[0] : opts.reduce((a, b) => (b.f > a.f + .2 ? b : a));
+  G.fallDir = best.u;
+  G.fallMax = Math.min(1.35, Math.asin(Math.min(1, Math.max(.25, best.f - .05) / 1.6)));
+  G.state = "fallen"; G.fallT = 0; G.falls++; G.lineFalls++; G.stumble = 0; G.target = null;
+  G.assist = Math.min(1, G.assist + .4); // sonraki deneme fark ettirmeden kolaylaşır
+  thud(); buzz([80, 50, 150]);
+  // Domino: düştüğün yönde biri varsa onu da devirirsin, o da önündekini.
+  // Her beden önündekine yaslanabildiği kadar eğilir; önündeki devrildikçe o da devrilir (bkz. leanOnto).
+  G.knocked = 0; G.chain = []; G.fallAng = 0;
+  let from = [x, z], dir = G.fallDir, delay = .3;
+  for (let k = 0; k < 4; k++) {
+    const hit = nextInLine(from, dir);
+    if (!hit) break;
+    hit.fallT = -delay; hit.fallDir = [...dir]; hit.fallAng = 0;
+    hit.gap = (hit.x - from[0]) * dir[0] + (hit.z - from[1]) * dir[1];
+    G.chain.push(hit); G.knocked++; from = [hit.x, hit.z]; delay += .28;
+  }
+  G.chain.forEach((n, i) => {
+    const last = i === G.chain.length - 1, f = freeDist(n.x, n.z, dir[0], dir[1], n, !last);
+    n.fallMax = Math.min(1.25, Math.asin(Math.min(1, Math.max(.3, f - .05) / 1.6)));
+  });
+  if (G.chain.length) G.fallMax = Math.min(1.35, Math.asin(Math.min(1, Math.max(.25, freeDist(x, z, dir[0], dir[1], null, true) - .05) / 1.6)));
+  setTimeout(() => showEnd("Düştün", G.knocked ? KNOCK_LINES[Math.min(G.knocked, KNOCK_LINES.length) - 1] : FALL_LINES[G.falls % FALL_LINES.length]), 1300 + G.knocked * 300);
+}
+// Arası gap olan, önündeki phi açısıyla eğikken bir bedenin ona değmeden eğilebileceği en büyük açı
+const FALL_H = 1.6, FALL_T = 2 * TORSO_R;
+const leanOnto = (gap, phi) => phi - Math.asin(Math.max(-1, Math.min(1, (FALL_T - gap * Math.cos(phi)) / FALL_H)));
+// Düşme yönünde, yaklaşık bir boy mesafesindeki ilk yolcu
+function nextInLine([x, z], [dx, dz]) {
+  let best = null, bd = 9;
+  for (const n of G.npcs) {
+    if (n.fallT !== undefined || n.state === "exit" || n.state === "board") continue;
+    const ox = n.x - x, oz = n.z - z, along = ox * dx + oz * dz, side = Math.abs(ox * dz - oz * dx);
+    if (along > .2 && along < 1.25 && side < .5 && along < bd) { best = n; bd = along; }
+  }
+  return best;
+}
+
+// ---------- Ses ve titreşim ----------
+let ac = null;
+function initAudio() { if (!ac) { try { ac = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) {} } if (ac && ac.state === "suspended") ac.resume().catch(() => {}); }
+function tone(freq, dur, type, vol, at = 0) {
+  if (!T.sound || !ac) return;
+  try {
+    const o = ac.createOscillator(), g = ac.createGain(), t0 = ac.currentTime + at;
+    o.type = type; o.frequency.value = freq;
+    g.gain.setValueAtTime(vol, t0); g.gain.exponentialRampToValueAtTime(.001, t0 + dur);
+    o.connect(g); g.connect(ac.destination); o.start(t0); o.stop(t0 + dur);
+  } catch (e) {}
+}
+const beep = (f, d) => tone(f, d, "square", .05);
+const thud = () => tone(70, .22, "sine", .35);
+const chime = () => { tone(659, .5, "sine", .14); tone(523, .7, "sine", .14, .42); };
+const doorSound = () => { tone(1320, .12, "square", .04); tone(1320, .12, "square", .04, .25); tone(220, .5, "sawtooth", .05, .1); };
+const buzz = (p) => {
+  try { if (navigator.vibrate && navigator.userActivation && navigator.userActivation.hasBeenActive) navigator.vibrate(p); } catch (e) {}
+};
+
+// ---------- Ekran yazıları ----------
+let flashTimer = 0;
+function flash(text, color, ms = 700) {
+  const f = $("flash"); f.textContent = text; f.style.color = color;
+  f.classList.toggle("on", !!text); clearTimeout(flashTimer);
+  if (text) flashTimer = setTimeout(() => f.classList.remove("on"), ms);
+}
+function setLed(text, blink = false) { const l = $("led"); l.textContent = text; l.classList.toggle("blink", blink); }
+// Görev rozeti: bu yolun görevi ve sonucu
+function setTask() {
+  const el = $("task"), t = G.task;
+  el.hidden = !t || G.state === "menu";
+  if (!t) return;
+  const d = TASKS[t.type];
+  el.textContent = t.ok === null ? d.label : (t.ok ? "✓ " + d.ok : "✗ " + d.fail);
+  el.className = t.ok === null ? "" : (t.ok ? "ok" : "fail");
+}
+
+// ---------- Sahne ----------
+const canvas = $("game");
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+renderer.setPixelRatio(Math.min(2, devicePixelRatio || 1));
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(70, 1, .05, 175);
+scene.add(new THREE.HemisphereLight(0xeef4fa, 0x6a6f74, 2.3));
+const sun = new THREE.DirectionalLight(0xfff4e2, 1.4); sun.position.set(-3, 8, 2); scene.add(sun);
+
+const mats = {};
+const M = (c) => mats[c] || (mats[c] = new THREE.MeshLambertMaterial({ color: c }));
+const box = (w, h, d, c, x, y, z, parent = scene) => {
+  const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), M(c)); m.position.set(x, y, z); parent.add(m); return m;
+};
+const cyl = (r, h, c, parent) => new THREE.Mesh(new THREE.CylinderGeometry(r, r, h, 10), M(c));
+
+// Araç: körüklü metrobüs. Sol duvar kesintisiz camlı, kapılar yalnızca sağda.
+const BUS_C = { floor: 0x4a4f55, aisle: 0x5a6068, wall: 0xd9dcdf, trim: 0x2a2d31, seat: 0x2d4f8a, shell: 0x8e959c, pole: 0xc9ced3, ceil: 0xe6e8ea };
+const LEN = BUS.back - BUS.front, MID = (BUS.back + BUS.front) / 2;
+// Cam açıklıkları: sağda kapılar, iki yanda körük kesilir
+const spans = (cuts) => {
+  cuts = cuts.slice().sort((u, v) => u[0] - v[0]);
+  const out = []; let z = BUS.front;
+  for (const [a, b] of cuts) { if (a > z) out.push([z, a]); z = Math.max(z, b); }
+  if (z < BUS.back) out.push([z, BUS.back]); return out;
+};
+const JCUT = [JOINT - .5, JOINT + .5];
+const wallSpans = { [-1]: spans([JCUT, [BUS.front, BUS.front + 1.05]]), [1]: spans([JCUT, ...DOORS.map((d) => [d - .55, d + .55])]) };
+box(2.6, .1, LEN, BUS_C.floor, 0, -.05, MID);
+box(1, .01, LEN, BUS_C.aisle, .22, .005, MID);
+box(2.6, .08, LEN, BUS_C.ceil, 0, BUS.height, MID);
+const glassMat = new THREE.MeshLambertMaterial({ color: 0x9fb4c2, transparent: true, opacity: .14, depthWrite: false });
+for (const side of [-1, 1]) {
+  const x = side * BUS.halfW;
+  for (const [z0, z1] of wallSpans[side]) {
+    box(.08, .95, z1 - z0, BUS_C.wall, x, .47, (z0 + z1) / 2); // pencere altı
+    box(.1, .06, z1 - z0, BUS_C.trim, x, .97, (z0 + z1) / 2); // cam fitili
+    const g = new THREE.Mesh(new THREE.PlaneGeometry(z1 - z0, 1.2), glassMat);
+    g.rotation.y = side * -Math.PI / 2; g.position.set(x, 1.6, (z0 + z1) / 2); scene.add(g);
+    for (let z = z0 + 1.5; z < z1 - .3; z += 1.5) box(.1, 1.2, .07, BUS_C.trim, x, 1.6, z); // pencere dikmeleri
+  }
+  box(.08, .26, LEN, BUS_C.wall, x, BUS.height - .13, MID); // pencere üstü bagaj bandı
+  box(.3, .05, LEN, 0xcfd3d7, side * (BUS.halfW - .15), BUS.height - .28, MID);
+}
+// Sürücü kabini (sol ön): bölme camı, koltuk, direksiyon, şoför
+box(.06, 1.2, .05, BUS_C.trim, CAB[1], .6, CAB[3]);
+box(1.1, 1.2, .04, BUS_C.wall, (CAB[0] + CAB[1]) / 2, .6, CAB[3]);
+{ const g = new THREE.Mesh(new THREE.PlaneGeometry(1.1, .9), glassMat); g.position.set((CAB[0] + CAB[1]) / 2, 1.65, CAB[3]); scene.add(g); }
+box(.5, .45, .5, 0x202326, -.7, .23, BUS.front + .65);
+box(.5, .7, .1, 0x202326, -.7, .8, BUS.front + .9);
+box(2.5, .9, .5, 0x26292d, 0, .45, BUS.front + .25); // gösterge paneli
+{ const w = new THREE.Mesh(new THREE.TorusGeometry(.22, .025, 8, 24), M(0x111111)); w.position.set(-.7, 1.05, BUS.front + .45); w.rotation.x = -1.1; scene.add(w); }
+const driver = new THREE.Group(); driver.position.set(-.7, .45, BUS.front + .7); scene.add(driver);
+box(.42, .6, .26, 0x3b4c63, 0, .3, 0, driver);
+{ const h = new THREE.Mesh(new THREE.SphereGeometry(.13, 14, 10), M(0xd8b58f)); h.position.y = .78; driver.add(h); }
+// Ön cam ve arka duvar
+box(2.6, .9, .08, BUS_C.trim, 0, .45, BUS.front);
+box(2.6, .25, .08, BUS_C.trim, 0, BUS.height - .12, BUS.front);
+{ const g = new THREE.Mesh(new THREE.PlaneGeometry(2.5, 1.35), glassMat); g.position.set(0, 1.6, BUS.front - .02); scene.add(g); }
+box(2.6, 1.1, .08, BUS_C.wall, 0, .55, BUS.back);
+box(2.6, .35, .08, BUS_C.wall, 0, BUS.height - .17, BUS.back);
+{ const g = new THREE.Mesh(new THREE.PlaneGeometry(2.4, 1), glassMat); g.position.set(0, 1.6, BUS.back); g.rotation.y = Math.PI; scene.add(g); }
+// Körük: ön ve arka gövdeyi bağlayan kıvrımlı lastik ve yerde döner tabla
+for (let i = 0; i <= 9; i++) {
+  const z = JOINT - .45 + i * .1, c = i % 2 ? 0x1b1d20 : 0x34383d;
+  for (const side of [-1, 1]) box(.12, BUS.height, .06, c, side * (BUS.halfW + .02), BUS.height / 2, z);
+  box(2.6, .1, .06, c, 0, BUS.height - .02, z);
+}
+{ const t = new THREE.Mesh(new THREE.CylinderGeometry(1.15, 1.15, .02, 40), M(0x6a7077)); t.position.set(0, .012, JOINT); scene.add(t);
+  const r = new THREE.Mesh(new THREE.TorusGeometry(1.0, .02, 6, 40), M(0x2b2e32)); r.rotation.x = Math.PI / 2; r.position.set(0, .025, JOINT); scene.add(r); }
+// Tavan ışıkları
+const lampMat = new THREE.MeshBasicMaterial({ color: 0xf8f6ee });
+for (const x of [-.7, .9]) for (const [z0, z1] of spans([JCUT])) { const l = new THREE.Mesh(new THREE.BoxGeometry(.16, .03, z1 - z0 - .4), lampMat); l.position.set(x, BUS.height - .05, (z0 + z1) / 2); scene.add(l); }
+for (const z of [-6, -2.5, 2, 6.5]) { const pl = new THREE.PointLight(0xfff8ec, 1.2, 6, 1.5); pl.position.set(0, BUS.height - .45, z); scene.add(pl); }
+// Koltuklar: öne bakan, plastik kabuklu, kumaş minderli
+for (const [x, z] of SEATS) {
+  box(.44, .3, .42, BUS_C.shell, x, .15, z);
+  box(.44, .12, .42, BUS_C.seat, x, .36, z);
+  box(.44, .6, .07, BUS_C.seat, x, .72, z + .19);
+  box(.44, .08, .09, BUS_C.shell, x, 1.04, z + .2); // tutamak
+}
+// Görevdeki boş koltuğu gösteren sarı çerçeve
+const seatGlow = new THREE.Mesh(new THREE.BoxGeometry(.5, .5, .5), new THREE.MeshBasicMaterial({ color: 0xffc82e, transparent: true, opacity: .35, depthWrite: false }));
+seatGlow.visible = false; scene.add(seatGlow);
+// Kafaların üstünden görünen, aşağıyı gösteren ok
+const seatArrow = new THREE.Mesh(new THREE.ConeGeometry(.2, .4, 4), new THREE.MeshBasicMaterial({ color: 0xffc82e }));
+seatArrow.rotation.x = Math.PI; seatArrow.visible = false; scene.add(seatArrow);
+const seatBeam = new THREE.Mesh(new THREE.CylinderGeometry(.26, .26, 2.2, 16, 1, true), new THREE.MeshBasicMaterial({ color: 0xffc82e, transparent: true, opacity: .16, depthWrite: false, side: THREE.DoubleSide }));
+seatBeam.visible = false; scene.add(seatBeam);
+// Kapılar: sağ duvarda dört çift kanat
+const doorPanels = [], doorLights = [], doorMarks = [], glowMats = {};
+glowMats[-1] = new THREE.MeshBasicMaterial({ transparent: true, opacity: 0 });
+glowMats[1] = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0 });
+for (const d of DOORS) {
+  const side = 1;
+  for (const s of [-1, 1]) {
+    const p = box(.06, 2.15, .54, 0x8d969f, BUS.halfW + .01, 1.08, d + s * .27);
+    const gl = new THREE.Mesh(new THREE.PlaneGeometry(.4, 1.5), glassMat); gl.rotation.y = -Math.PI / 2; gl.position.set(-.035, .2, 0); p.add(gl); // kanat camı
+    p.userData = { base: d + s * .27, dir: s, side };
+    doorPanels.push(p);
+  }
+  box(.04, .12, 1.1, 0x000000, BUS.halfW - .02, 2.24, d);
+  for (const s of [-1, 1]) box(.05, 2.2, .06, 0xffc82e, BUS.halfW - .03, 1.1, d + s * .57); // sarı kapı çerçevesi
+  box(.6, .012, 1.12, 0xffc82e, BUS.halfW - .3, .004, d); // kapı eşiği
+  const l = box(.03, .16, 1.0, 0x553311, BUS.halfW - .05, 2.24, d);
+  l.material = new THREE.MeshBasicMaterial({ color: 0x553311 }); l.userData.side = side; doorLights.push(l);
+  const g = new THREE.Mesh(new THREE.PlaneGeometry(1.04, 2.1), glowMats[1]);
+  g.rotation.y = -Math.PI / 2; g.position.set(BUS.halfW + .07, 1.05, d); scene.add(g);
+  const m = new THREE.Mesh(new THREE.PlaneGeometry(.8, 1.15), new THREE.MeshBasicMaterial({ color: 0xffc82e, transparent: true, opacity: .2, depthWrite: false }));
+  m.rotation.x = -Math.PI / 2; m.position.set(.85, .014, d); m.userData.side = side; scene.add(m); doorMarks.push(m);
+}
+// Direkler (üstlerinde kırmızı "dur" düğmesi) ve tavan boruları
+for (const [x, z] of POLES) if (Math.abs(x) < WALL_X) {
+  const p = cyl(.025, BUS.height, BUS_C.pole); p.position.set(x, BUS.height / 2, z); scene.add(p);
+  box(.06, .09, .06, 0xd0302a, x, 1.35, z);
+}
+const straps = [];
+for (const x of [-.31, .74]) for (const [z0, z1] of spans([JCUT])) {
+  const bar = cyl(.02, z1 - z0 - .3, BUS_C.pole); bar.rotation.x = Math.PI / 2; bar.position.set(x, BUS.height - .2, (z0 + z1) / 2); scene.add(bar);
+  for (let z = z0 + .45; z <= z1 - .45; z += .6) {
+    const g = new THREE.Group(); g.position.set(x, BUS.height - .2, z);
+    box(.03, .32, .015, 0x2c2c2c, 0, -.16, 0, g);
+    const ring = new THREE.Mesh(new THREE.TorusGeometry(.055, .012, 6, 14), M(0xe9e2d0)); ring.position.y = -.36; g.add(ring);
+    scene.add(g); straps.push({ g, phase: Math.random() * 6 });
+  }
+}
+
+// ---------- Dış dünya: D-100 ortasındaki metrobüs yolu. Araç şeridin solundan gider ----------
+// x: solda karşıdan gelen otomobil şeritleri, ortada metrobüs yolu ve istasyon adası, sağda karşı yönün metrobüsü
+// ve aynı yöne giden (sıkışık) trafik. Araç ilerledikçe dünya ona doğru akar, virajda döner.
+const ROAD_Y = -.6;
+scene.background = new THREE.Color(0xc9dbe8);
+scene.fog = new THREE.Fog(0xc9dbe8, 30, 150);
+const world = new THREE.Group(); scene.add(world);
+const land = new THREE.Group(); world.add(land); // köprüde gizlenen kara parçaları
+const road = new THREE.Mesh(new THREE.PlaneGeometry(34, 300), M(0x3c4045)); road.rotation.x = -Math.PI / 2; road.position.set(3.7, ROAD_Y, -120); world.add(road);
+const ground = new THREE.Mesh(new THREE.PlaneGeometry(260, 300), M(0x8a8d86)); ground.rotation.x = -Math.PI / 2; ground.position.set(0, ROAD_Y - .02, -120); land.add(ground);
+// Akan şerit çizgileri ve bariyerler
+const LOOP = 180, wrapZ = (z) => ((z % LOOP) + LOOP) % LOOP;
+const scroll = [];
+const addScroll = (m, off, loop = LOOP) => { m.userData.off = off; m.userData.loop = loop; scroll.push(m); return m; };
+for (let i = 0; i < 36; i++) for (const x of [-5.65, -9.15, 12.9, 16.4]) addScroll(box(.14, .02, 3, 0xe8eaec, x, ROAD_Y + .01, 0, world), i * 5);
+for (const x of [-2.05, 9.25]) { // beton bariyer ve üstünde tel çit
+  box(.5, .8, 300, 0xb9bcbf, x, ROAD_Y + .4, -120, world);
+  box(.04, 1.1, 300, 0x7f878f, x, ROAD_Y + 1.35, -120, world).material = new THREE.MeshLambertMaterial({ color: 0x7f878f, transparent: true, opacity: .35 });
+}
+box(3.4, .18, 300, 0x9a9d9f, 3.55, ROAD_Y + .09, -120, world); // istasyonlar arası orta ada
+box(.35, .7, 300, 0xb9bcbf, 5.25, ROAD_Y + .35, -120, world);
+for (const x of [-1.75, 1.75, 5.45, 9.0]) box(.12, .02, 300, 0xf2f2f2, x, ROAD_Y + .01, -120, world); // şerit kenarları
+// Orta adadaki aydınlatma direkleri
+for (let i = 0; i < 6; i++) {
+  const g = new THREE.Group(); world.add(g);
+  const pole = cyl(.09, 10, 0x8b939b); pole.position.y = ROAD_Y + 5; g.add(pole);
+  for (const s of [-1, 1]) { box(2.2, .08, .1, 0x8b939b, s * 1.1, ROAD_Y + 9.9, 0, g); box(.5, .1, .25, 0xe7e2d2, s * 2.1, ROAD_Y + 9.8, 0, g); }
+  g.position.x = 3.55; g.userData.lamp = true; addScroll(g, i * 30);
+}
+// Binalar: pencere dokulu apartman blokları
+const winTex = (() => {
+  const c = document.createElement("canvas"); c.width = c.height = 64; const x = c.getContext("2d");
+  x.fillStyle = "#ffffff"; x.fillRect(0, 0, 64, 64);
+  x.fillStyle = "#6d7f8f"; x.fillRect(12, 14, 40, 30);
+  x.fillStyle = "#c9ccce"; x.fillRect(8, 48, 48, 5);
+  const t = new THREE.CanvasTexture(c); t.wrapS = t.wrapT = THREE.RepeatWrapping; return t;
+})();
+const buildings = [];
+{
+  const r = rng(5), tints = [0xf1e9da, 0xe6e2dc, 0xd9d2c4, 0xece4d2, 0xcfd3d6, 0xe8d6c0];
+  for (let i = 0; i < 44; i++) {
+    const side = i % 2 ? 1 : -1, h = 9 + r() * 30, w = 10 + r() * 12, d = 9 + r() * 8;
+    const geo = new THREE.BoxGeometry(w, h, d), uv = geo.attributes.uv;
+    const sc = [[d, h], [d, h], [w, d], [w, d], [w, h], [w, h]];
+    for (let f = 0; f < 6; f++) for (let k = 0; k < 4; k++) { const j = f * 4 + k; uv.setXY(j, uv.getX(j) * sc[f][0] / 3.2, uv.getY(j) * sc[f][1] / 3); }
+    const b = new THREE.Mesh(geo, new THREE.MeshLambertMaterial({ color: tints[i % tints.length], map: winTex }));
+    b.position.set(side > 0 ? 30 + r() * 14 : -22 - r() * 14, ROAD_Y + h / 2, 0); land.add(b);
+    addScroll(b, i * 9.5, 420); buildings.push(b);
+  }
+}
+// Araçlar: otomobiller ve karşı yönden gelen metrobüs
+function makeCar(c) {
+  const g = new THREE.Group();
+  box(1.8, .75, 4.3, c, 0, ROAD_Y + .55, 0, g);
+  box(1.6, .55, 2.2, 0x22303b, 0, ROAD_Y + 1.18, .2, g);
+  for (const sx of [-1, 1]) for (const sz of [-1.4, 1.4]) box(.25, .6, .6, 0x111111, sx * .85, ROAD_Y + .3, sz, g);
+  return g;
+}
+function makeBus(len = 18.5) {
+  const g = new THREE.Group();
+  box(2.55, 2.6, len, 0xf3f4f4, 0, ROAD_Y + 1.75, 0, g);
+  box(2.58, 1.1, len - .6, 0x1d2730, 0, ROAD_Y + 2.15, 0, g);
+  box(2.6, .25, len, 0xc4262e, 0, ROAD_Y + 1.15, 0, g);
+  const lights = [];
+  for (const sx of [-1, 1]) {
+    const m = new THREE.MeshBasicMaterial({ color: 0x6a1010 });
+    const l = new THREE.Mesh(new THREE.BoxGeometry(.3, .25, .05), m); l.position.set(sx * 1.05, ROAD_Y + 1.1, len / 2 + .01); g.add(l); lights.push(m);
+    const hl = new THREE.Mesh(new THREE.BoxGeometry(.35, .2, .05), new THREE.MeshBasicMaterial({ color: 0xfff6d8 })); hl.position.set(sx * 1.0, ROAD_Y + 1.0, -len / 2 - .01); g.add(hl);
+  }
+  for (const sz of [-len * .35, -len * .05, len * .35]) for (const sx of [-1, 1]) box(.3, .9, .9, 0x111111, sx * 1.15, ROAD_Y + .45, sz, g);
+  g.userData.lights = lights;
+  return g;
+}
+const cars = [];
+{
+  const r = rng(11), cols = [0xf2f2f2, 0x1c1c1c, 0x9aa1a8, 0x7a1f1f, 0x2b4a7a, 0xd8d0b8, 0xf0c419];
+  // v: dünyaya göre hız (m/sn). Solda karşıdan gelen akış, sağda aynı yöne sıkışık trafik.
+  [-3.9, -7.4, -10.9].forEach((x, l) => { for (let k = 0; k < 4; k++) cars.push({ g: makeCar(cols[(cars.length * 3) % cols.length]), x, z: -k * 55 - r() * 20, v: 10 + l * 2.5 }); });
+  [11.15, 14.65, 18.15].forEach((x, l) => { for (let k = 0; k < 5; k++) cars.push({ g: makeCar(cols[(cars.length * 5) % cols.length]), x, z: -k * 44 - r() * 20, v: -(2 + l * 1.2), rot: true }); });
+  for (const c of cars) { c.g.position.x = c.x; if (c.rot) c.g.rotation.y = Math.PI; world.add(c.g); }
+}
+const oncomingBus = makeBus(); oncomingBus.position.x = 7.25; oncomingBus.rotation.y = Math.PI; world.add(oncomingBus);
+let oncZ = -400;
+const busAhead = makeBus(); busAhead.visible = false; world.add(busAhead);
+// Metrobüs istasyonu: araçla karşı yön arasındaki ada. Kapı tarafında, son frende yaklaşır.
+const station = new THREE.Group(); station.visible = false; world.add(station);
+{
+  const L = 28, x0 = BUS.halfW + .06, x1 = 5.4, cx = (x0 + x1) / 2;
+  box(x1 - x0, -ROAD_Y, L, 0xa9adb0, cx, ROAD_Y / 2 - .01, 0, station);
+  box(.45, .015, L, 0xffc82e, x0 + .25, .002, 0, station); // sarı hissedilebilir şerit
+  box(x1 - x0 + .6, .14, L, 0x5d6670, cx, 3.5, 0, station); // sundurma
+  for (let z = -L / 2 + 2; z <= L / 2 - 2; z += 6) { const c = cyl(.1, 3.5, 0x5d6670); c.position.set(x1 - .3, 1.75, z); station.add(c); }
+  // Karşı yöne bakan arka bölme: alt kısmı dolu, üstü buzlu cam
+  box(.08, 1.0, L, 0xc3c8cc, x1 - .25, .5, 0, station);
+  const frost = new THREE.MeshLambertMaterial({ color: 0xdfe8ee, transparent: true, opacity: .55 });
+  for (let z = -L / 2 + 2; z <= L / 2 - 2; z += 3) { const g = new THREE.Mesh(new THREE.PlaneGeometry(2.9, 1.4), frost); g.rotation.y = -Math.PI / 2; g.position.set(x1 - .25, 1.7, z); station.add(g); box(.1, 2.4, .08, 0x5d6670, x1 - .25, 1.2, z + 1.5, station); }
+  // Bekleme bankları ve peronda bekleyen yolcular
+  for (const z of [-9, -2.5, 4.5, 10]) { box(.5, .45, 2, 0x8a6b4a, x1 - .7, .23, z, station); }
+}
+const stationSigns = [];
+for (const z of [-5.6, 4.3]) {
+  const c = document.createElement("canvas"); c.width = 512; c.height = 96;
+  const tex = new THREE.CanvasTexture(c);
+  const m = new THREE.Mesh(new THREE.PlaneGeometry(3.2, .6), new THREE.MeshBasicMaterial({ map: tex }));
+  m.rotation.y = -Math.PI / 2; m.position.set(BUS.halfW + 1.2, 2.05, z); station.add(m);
+  box(.04, .9, .04, 0x5d6670, BUS.halfW + 1.2, 2.9, z, station); // tabela askısı
+  stationSigns.push({ c, tex });
+}
+let stationName = "", stRemain = null, stTravel = 0;
+function setStationName(name) {
+  if (name === stationName) return; stationName = name;
+  for (const { c, tex } of stationSigns) {
+    const x = c.getContext("2d"); x.fillStyle = "#1e2a36"; x.fillRect(0, 0, 512, 96);
+    x.fillStyle = "#ffffff"; let fs = 54; x.font = `600 ${fs}px 'Barlow Condensed', sans-serif`;
+    const t = name.toLocaleUpperCase("tr-TR");
+    while (x.measureText(t).width > 480 && fs > 24) { fs -= 2; x.font = `600 ${fs}px 'Barlow Condensed', sans-serif`; }
+    x.textAlign = "center"; x.textBaseline = "middle"; x.fillText(t, 256, 50); tex.needsUpdate = true;
+  }
+}
+// Boğaz köprüsü: iki kule, ana kablolar, askılar, aşağıda deniz. Bölüm süresine sığsın diye boyu kısaltıldı.
+const BR = { a: -25, span: 220, y: -42, edge: [-13.6, 21.4], top: 46 };
+const bridge = new THREE.Group(); bridge.visible = false; world.add(bridge);
+{
+  const water = new THREE.Mesh(new THREE.PlaneGeometry(7000, 7000), M(0x3d6f8c)); water.rotation.x = -Math.PI / 2; water.position.set(0, BR.y, BR.a - BR.span / 2); bridge.add(water);
+  const SH = 9; // alçak kıyı şeridi; arkasında tepeler yükselir, yol viyadükle iner
+  for (const [z0, s] of [[BR.a + 10, 1], [BR.a - BR.span - 10, -1]]) { // iki yaka: s = karanın uzandığı yön
+    box(1400, SH, 400, 0x7b8a66, 0, BR.y + SH / 2, z0 + s * 200, bridge);
+    const r = rng(s > 0 ? 3 : 4), top = BR.y + SH;
+    for (let i = 0; i < 70; i++) {
+      const h = 6 + r() * 16, x = (r() < .5 ? -1 : 1) * (30 + r() * 560) + 4;
+      box(8 + r() * 10, h, 8 + r() * 8, [0xeee6d6, 0xd9cfbd, 0xc9b9a2, 0xe2d5c3][i % 4], x, top + h / 2, z0 + s * (8 + r() * 220), bridge);
+    }
+    for (let z = z0 + s * 8; Math.abs(z - z0) < 330; z += s * 28) for (const x of BR.edge) { // viyadük ayakları
+      const pier = cyl(.9, ROAD_Y - 2 - (BR.y + SH), 0xb8bcbf); pier.position.set(x + Math.sign(x - 3.9) * -1.5, (ROAD_Y - 2 + BR.y + SH) / 2, z); bridge.add(pier);
+    }
+    for (let i = 0; i < 8; i++) { const hill = new THREE.Mesh(new THREE.SphereGeometry(70 + r() * 50, 16, 8), M(0x667a55)); hill.scale.y = .4; hill.position.set((r() * 2 - 1) * 500, top, z0 + s * (200 + r() * 150)); bridge.add(hill); }
+  }
+  for (const x of BR.edge) {
+    box(.25, 1.1, BR.span + 260, 0xd7dadc, x, ROAD_Y + .55, BR.a - BR.span / 2, bridge); // korkuluk
+    box(1.2, 2.4, BR.span + 260, 0x8f979e, x, ROAD_Y - 1.23, BR.a - BR.span / 2, bridge); // tabliye kenarı
+  }
+  box(BR.edge[1] - BR.edge[0], 2, BR.span + 260, 0x6c737a, (BR.edge[0] + BR.edge[1]) / 2, ROAD_Y - 1.03, BR.a - BR.span / 2, bridge);
+  const steel = 0xe4e6e3;
+  for (const tz of [BR.a, BR.a - BR.span]) {
+    for (const x of BR.edge) box(2.6, BR.top - BR.y, 3.2, steel, x + Math.sign(x - 3.9) * 1.2, (BR.top + BR.y) / 2, tz, bridge);
+    for (const y of [BR.top - 1.5, ROAD_Y - 4]) box(BR.edge[1] - BR.edge[0] + 5, 2.2, 2.2, steel, (BR.edge[0] + BR.edge[1]) / 2, y, tz, bridge);
+  }
+  // Ana kablo: kule tepesinden aşağı sarkan eğri; askılar dikey iner
+  for (const x of BR.edge) {
+    const xc = x + Math.sign(x - 3.9) * 1.2, pts = [];
+    const sagY = (z) => { const u = (z - BR.a) / -BR.span; return 2 + (BR.top - 2) * (2 * u - 1) ** 2; };
+    for (let i = 0; i <= 48; i++) { const z = BR.a - BR.span * i / 48; pts.push(new THREE.Vector3(xc, sagY(z), z)); }
+    bridge.add(new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts), 96, .45, 8), M(steel)));
+    for (const [z0, dir] of [[BR.a, 1], [BR.a - BR.span, -1]]) { // yan açıklık kabloları karaya iner
+      const side = [new THREE.Vector3(xc, BR.top, z0), new THREE.Vector3(xc, BR.top * .4, z0 + dir * 70), new THREE.Vector3(xc, ROAD_Y, z0 + dir * 130)];
+      bridge.add(new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(side), 24, .45, 8), M(steel)));
+    }
+    for (let z = BR.a - 6; z > BR.a - BR.span + 3; z -= 6) {
+      const h = sagY(z) - ROAD_Y; const sp = cyl(.06, h, 0x9ea5aa); sp.position.set(xc, ROAD_Y + h / 2, z); bridge.add(sp);
+    }
+  }
+}
+// Fren olaylarında öndeki metrobüs yavaşlar: fren lambaları yanar, araç ona yaklaşır.
+const propsFor = new Map();
+function buildProps() {
+  for (const p of propsFor.values()) world.remove(p);
+  propsFor.clear();
+  for (const e of G.events) {
+    if (e.k !== "pot") continue;
+    const p = new THREE.Mesh(new THREE.CylinderGeometry(.6, .6, .02, 16), M(0x1a1c1e)); p.position.set(e.v[0] * 1.2, ROAD_Y + .02, 0); p.scale.z = .5;
+    bendify(p); world.add(p); propsFor.set(e, p);
+  }
+}
+
+// Viraj: dünya dönmez, yol önde ve arkada kıvrılır (x += k·z²); araç hep yolun teğetinde kalır.
+// Dış dünyanın malzemeleri ayrı kopyalanır ki aracın içi bükülmesin; uzun parçalar bükülebilsin diye bölünür.
+const bendU = { value: 0 }, bentMats = new Map();
+function bentMat(m) {
+  if (!bentMats.has(m)) {
+    const c = m.clone();
+    c.onBeforeCompile = (sh) => {
+      sh.uniforms.uBend = bendU;
+      sh.vertexShader = "uniform float uBend;\n" + sh.vertexShader.replace("#include <project_vertex>", `
+        vec4 bw = modelMatrix * vec4(transformed, 1.0);
+        float bd = max(0.0, abs(bw.z) - 2.0);
+        bw.x += uBend * bd * bd;
+        vec4 mvPosition = viewMatrix * bw;
+        gl_Position = projectionMatrix * mvPosition;`);
+    };
+    bentMats.set(m, c);
+  }
+  return bentMats.get(m);
+}
+function bendify(root) {
+  root.traverse((o) => {
+    if (!o.isMesh) return;
+    const g = o.geometry, q = g.parameters || {};
+    if (g.type === "PlaneGeometry" && q.height >= 1000) return; // deniz düz ve tek renk: bükülmesine gerek yok
+    if (g.type === "BoxGeometry" && q.depth > 20) o.geometry = new THREE.BoxGeometry(q.width, q.height, q.depth, 1, 1, Math.ceil(q.depth / 6));
+    else if (g.type === "PlaneGeometry" && q.height > 20 && q.height < 1000) o.geometry = new THREE.PlaneGeometry(q.width, q.height, Math.ceil(q.width / 40), Math.ceil(q.height / 6));
+    o.material = bentMat(o.material);
+  });
+}
+bendify(world);
+busAhead.userData.lights = busAhead.userData.lights.map(bentMat); // fren lambası rengi kopyada değişsin
+
+// İnsanlar: ayaklar yere sabit, kalça eklemi denge yönünde eğilir, kollar çırpınır.
+// Her yolcunun görünüşü (look) bir kez rastgele seçilir, yolcuyla birlikte koltuğa ve geri taşınır.
+const pick = (a) => a[Math.floor(Math.random() * a.length)];
+const SKIN = [0xeccaa6, 0xe2bb94, 0xd6aa80, 0xc99a70, 0xb8875f, 0xf1d3b6, 0x9a6844];
+const HAIR_C = [0x17130f, 0x1f1813, 0x2c2017, 0x3b2a1d, 0x523822, 0x6e4c2f, 0x9c7646, 0x5c2618];
+const TOPS = [0xe4e2dc, 0x9fb3c9, 0x2b2d31, 0x6c7178, 0x7a2430, 0x2f4a3c, 0xb59a5c, 0x41506b, 0xc9c2b4, 0x8c4f3a];
+const COATS = [0x1f2124, 0x2a3244, 0x3d4046, 0x6b5a45, 0x8b7a5c, 0x4c5236, 0x5a2a2e, 0x46607e, 0x9a9890, 0x3a2a20];
+const PANTS = [0x34476a, 0x26314a, 0x1c1d20, 0x4d5157, 0xa39274, 0x6f6a55, 0x3e3a36];
+const SHOES = [0x161616, 0x161616, 0xe6e6e2, 0x4a3020, 0x5d5f63, 0x2a2420];
+const SCARF = [0x6e5a7a, 0x2d3a52, 0x7a2f3a, 0x3f5a4f, 0xdcd8d2, 0x1f1f22, 0x9a4f5e, 0x4f6b8a, 0x8c8f4a];
+const LIP = (c) => new THREE.Color(c).multiplyScalar(.78).getHex();
+function randomLook(elder = false) {
+  const f = Math.random() < .5, r = Math.random;
+  const L = {
+    f, elder, skin: pick(SKIN), h: f ? .93 + r() * .06 : .97 + r() * .07, w: .9 + r() * .24,
+    hairC: pick(HAIR_C), hair: f ? pick(["long", "long", "pony", "bun", "short", "scarf", "scarf"]) : pick(["short", "short", "crop", "crop", "bald"]),
+    beard: !f && r() < .3, top: pick(TOPS), coat: r() < .55 ? pick(COATS) : null, pants: pick(PANTS), shoes: pick(SHOES),
+    scarfC: pick(SCARF), bag: r() < .25, skirt: false, short: false,
+    // Ayakta dururken baktığı yön: çoğu yolcu yola ya da geriye, bir kısmı cama döner.
+    yaw: pick([0, 0, 0, Math.PI, Math.PI, Math.PI / 2, -Math.PI / 2]) + (r() - .5) * .6,
+  };
+  L.skirt = f && L.hair !== "short" && r() < .3;
+  L.short = !L.coat && r() < .3;
+  if (elder) {
+    Object.assign(L, { coat: ELDER.color, hairC: pick([0x9a9a98, 0xc4c4c0, ELDER.hair]), cane: true, bag: false, short: false, h: L.h - .05, w: L.w + .06 });
+    L.hair = f ? pick(["scarf", "bun"]) : pick(["short", "bald"]);
+    if (L.hair === "scarf") L.scarfC = pick([0x3a3a40, 0xdcd8d2, 0x4a4f5e]);
+  }
+  return L;
+}
+const PLAYER_LOOK = { f: false, skin: 0xdcb08a, h: 1, w: 1, hairC: 0x2c2017, hair: "short", beard: false, top: 0x2a2c30, coat: 0xffc82e, pants: 0x26314a, shoes: 0xe6e6e2, yaw: 0 };
+
+// Parçalar her eklem için tek geometride birleşir (renkler köşe rengi): yolcu başına ~10 çizim.
+const SPH = new THREE.SphereGeometry(1, 14, 10), SPH_HI = new THREE.SphereGeometry(1, 22, 16);
+const _e = new THREE.Euler(), _q = new THREE.Quaternion(), _p = new THREE.Vector3(), _s = new THREE.Vector3();
+function part(list, g, c, x = 0, y = 0, z = 0, sx = 1, sy = 1, sz = 1, rx = 0, ry = 0, rz = 0) {
+  list.push({ g, c, m: new THREE.Matrix4().compose(_p.set(x, y, z), _q.setFromEuler(_e.set(rx, ry, rz)), _s.set(sx, sy, sz)) });
+}
+function mergeParts(list) {
+  let nv = 0, ni = 0;
+  for (const p of list) { nv += p.g.attributes.position.count; ni += p.g.index ? p.g.index.count : p.g.attributes.position.count; }
+  const pos = new Float32Array(nv * 3), nor = new Float32Array(nv * 3), col = new Float32Array(nv * 3), idx = new Uint32Array(ni);
+  const v = new THREE.Vector3(), nm = new THREE.Matrix3(), c = new THREE.Color();
+  let vo = 0, io = 0;
+  for (const p of list) {
+    const P = p.g.attributes.position, N = p.g.attributes.normal;
+    nm.getNormalMatrix(p.m); c.setHex(p.c);
+    for (let i = 0; i < P.count; i++) {
+      const k = (vo + i) * 3;
+      v.fromBufferAttribute(P, i).applyMatrix4(p.m); pos[k] = v.x; pos[k + 1] = v.y; pos[k + 2] = v.z;
+      v.fromBufferAttribute(N, i).applyMatrix3(nm).normalize(); nor[k] = v.x; nor[k + 1] = v.y; nor[k + 2] = v.z;
+      col[k] = c.r; col[k + 1] = c.g; col[k + 2] = c.b;
+    }
+    if (p.g.index) for (let i = 0; i < p.g.index.count; i++) idx[io + i] = p.g.index.getX(i) + vo;
+    else for (let i = 0; i < P.count; i++) idx[io + i] = i + vo;
+    io += p.g.index ? p.g.index.count : P.count; vo += P.count;
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+  g.setAttribute("normal", new THREE.BufferAttribute(nor, 3));
+  g.setAttribute("color", new THREE.BufferAttribute(col, 3));
+  g.setIndex(new THREE.BufferAttribute(idx, 1));
+  g.computeBoundingSphere();
+  return g;
+}
+const lathe = (pts, phiStart = 0, phiLen = Math.PI * 2) => new THREE.LatheGeometry(pts.map(([r, y]) => new THREE.Vector2(r, y)), 22, phiStart, phiLen);
+const pcyl = (rt, rb, h, open = false) => new THREE.CylinderGeometry(rt, rb, h, 14, 1, open);
+const geoCache = new WeakMap();
+function personGeo(L) {
+  if (geoCache.has(L)) return geoCache.get(L);
+  const hip = [], head = [], armU = [[], []], armL = [[], []], legU = [], legL = [];
+  const w = L.w, sleeve = L.coat ?? L.top, f = L.f;
+  // Gövde: kalça (pantolon), göğüs (üst), boyun; kadında omuz dar, bel ince.
+  part(hip, lathe([[.001, -.095], [.13, -.08], [.172, -.035], [.186, .04], [.178, .12]]), L.skirt ? L.top : L.pants, 0, 0, 0, w, 1, .7);
+  const sh = f ? .17 : .188, waist = f ? .152 : .172;
+  part(hip, lathe([[waist, .08], [waist, .2], [f ? .19 : .195, .34], [f ? .198 : .208, .45], [sh + .005, .52], [sh - .012, .59], [.15, .64], [.06, .662], [.001, .668]]), L.top, 0, 0, 0, w, 1, .62);
+  part(hip, SPH, sleeve, -(sh * w - .006), .56, 0, .05, .05, .056);
+  part(hip, SPH, sleeve, sh * w - .006, .56, 0, .05, .05, .056);
+  part(hip, pcyl(.043, .05, .13), L.skin, 0, .67, .005);
+  if (L.coat) {
+    // Önü açık mont/ceket: arkadan bakınca kalçaya kadar iner, önden içindeki üst görünür.
+    const gap = .3;
+    part(hip, lathe([[.196, -.14], [.198, 0], [waist + .028, .2], [(f ? .2 : .21) + .014, .42], [sh + .02, .52], [sh + .004, .6], [.16, .648], [.085, .674]], Math.PI + gap, Math.PI * 2 - 2 * gap), L.coat, 0, 0, 0, w, 1, .66);
+    part(hip, pcyl(.06, .075, .07, true), L.coat, 0, .665, .012, 1, 1, 1);
+  }
+  if (L.skirt) part(hip, pcyl(.19, .27, .5, true), L.pants, 0, -.27, 0, w, 1, .78);
+  if (L.bag) {
+    part(hip, new THREE.BoxGeometry(.28, .36, .13), 0x2b2e33, 0, .37, .17, w, 1, 1);
+    part(hip, new THREE.BoxGeometry(.22, .14, .03), 0x3a3e44, 0, .28, .24, w, 1, 1);
+    for (const s of [-1, 1]) part(hip, new THREE.BoxGeometry(.04, .32, .02), 0x2b2e33, s * .1 * w, .42, -.128);
+  }
+  // Baş: kafatası + çene, yüz ayrıntıları; başörtüsünde yüz öne alınır.
+  const scarf = L.hair === "scarf", fz = scarf ? -.016 : 0;
+  part(head, SPH_HI, L.skin, 0, 0, 0, .08, .112, .098);
+  part(head, SPH, L.skin, 0, -.062, -.022 + fz * .6, .061, .058, .07);
+  part(head, SPH, LIP(L.skin), 0, -.014, -.099 + fz, .014, .026, .02, -.25);
+  part(head, SPH, LIP(L.skin), 0, -.058, -.087 + fz, .022, .006, .008);
+  for (const s of [-1, 1]) {
+    part(head, SPH, 0x1a1817, s * .03, .012, -.088 + fz, .011, .011, .008);
+    part(head, new THREE.BoxGeometry(.032, .007, .01), L.hairC, s * .031, .036, -.092 + fz, 1, 1, 1, 0, 0, s * -.08);
+    if (!scarf) part(head, SPH, L.skin, s * .08, -.002, .006, .013, .027, .02);
+  }
+  const cap = (tl, tilt, c, sx = 1) => part(head, new THREE.SphereGeometry(1, 20, 12, 0, Math.PI * 2, 0, Math.PI * tl), c, 0, .012, .008, .087 * sx, .12, .106, tilt);
+  if (L.hair === "short") cap(.6, .5, L.hairC);
+  else if (L.hair === "crop") cap(.56, .55, L.hairC, .98);
+  else if (L.hair === "bald") cap(.62, 1.05, L.hairC, .99);
+  else if (L.hair === "long" || L.hair === "pony" || L.hair === "bun") {
+    cap(.62, .42, L.hairC);
+    if (L.hair === "long") part(head, SPH, L.hairC, 0, -.1, .066, .088, .16, .052);
+    if (L.hair === "pony") part(head, SPH, L.hairC, 0, -.07, .118, .03, .1, .03, .35);
+    if (L.hair === "bun") part(head, SPH, L.hairC, 0, .058, .1, .042, .04, .04);
+  } else if (scarf) {
+    part(head, SPH_HI, L.scarfC, 0, .006, .01, .094, .128, .112);
+    part(head, pcyl(.09, .2, .2), L.scarfC, 0, -.15, .012, 1, 1, .72);
+    part(head, SPH, L.skin, 0, -.022, -.07, .062, .082, .05);
+  }
+  if (L.beard) {
+    part(head, new THREE.SphereGeometry(1, 16, 8, 0, Math.PI * 2, Math.PI * .42, Math.PI * .58), L.hairC, 0, -.045, -.02, .07, .07, .08);
+    part(head, new THREE.BoxGeometry(.05, .01, .012), L.hairC, 0, -.044, -.094);
+  }
+  // Kol: üst kol, dirsekten sonra ön kol ve el; kısa kolluda ön kol çıplak.
+  for (const i of [0, 1]) {
+    if (L.short) {
+      part(armU[i], pcyl(.052, .047, .14), sleeve, 0, -.07, 0);
+      part(armU[i], pcyl(.04, .037, .16), L.skin, 0, -.21, 0);
+    } else part(armU[i], pcyl(.048, .042, .29), sleeve, 0, -.145, 0);
+    part(armL[i], pcyl(.04, .033, .25), L.short ? L.skin : sleeve, 0, -.125, 0);
+    part(armL[i], SPH, L.skin, 0, -.32, -.005, .024, .075, .042);
+  }
+  if (L.cane) part(armL[1], pcyl(.012, .012, .82), 0x3a2a1c, 0, -.73, -.02);
+  // Bacak: uyluk, dizden sonra baldır ve ayakkabı (burnu öne, -z).
+  const legC = L.skirt ? LIP(L.skin) : L.pants;
+  part(legU, pcyl(.084, .062, .44), L.skirt ? legC : L.pants, 0, -.22, 0);
+  part(legL, pcyl(.058, .045, .36), legC, 0, -.18, 0);
+  part(legL, SPH, L.shoes, 0, -.352, -.045, .05, .045, .13);
+  part(legL, new THREE.BoxGeometry(.1, .022, .26), L.skirt ? 0x161616 : 0x2a2a2a, 0, -.386, -.045);
+  const out = { hip: mergeParts(hip), head: mergeParts(head), armU: armU.map(mergeParts), armL: armL.map(mergeParts), legU: mergeParts(legU), legL: mergeParts(legL), w, sh };
+  geoCache.set(L, out);
+  return out;
+}
+function makePerson(L, own = false) {
+  const G_ = personGeo(L), mats = [];
+  const mat = new THREE.MeshLambertMaterial({ vertexColors: true, transparent: own });
+  if (own) mats.push(mat);
+  const mesh = (g) => new THREE.Mesh(g, mat);
+  const root = new THREE.Group(), body = new THREE.Group();
+  body.scale.setScalar(L.h); root.add(body);
+  const legs = [], knees = [];
+  for (const s of [-1, 1]) {
+    const leg = new THREE.Group(); leg.position.set(s * .095 * G_.w, .82, 0); leg.add(mesh(G_.legU));
+    const knee = new THREE.Group(); knee.position.y = -.44; knee.add(mesh(G_.legL)); leg.add(knee);
+    body.add(leg); legs.push(leg); knees.push(knee);
+  }
+  const hip = new THREE.Group(); hip.position.y = .82; hip.add(mesh(G_.hip)); body.add(hip);
+  const head = new THREE.Group(); head.position.y = .8; head.scale.setScalar(1.07); head.add(mesh(G_.head)); hip.add(head);
+  const arms = [], elbows = [];
+  for (const i of [0, 1]) {
+    const s = i ? 1 : -1;
+    const arm = new THREE.Group(); arm.position.set(s * (G_.sh * G_.w + .028), .565, 0); arm.add(mesh(G_.armU[i]));
+    const elbow = new THREE.Group(); elbow.position.y = -.29; elbow.add(mesh(G_.armL[i])); arm.add(elbow);
+    hip.add(arm); arms.push(arm); elbows.push(elbow);
+  }
+  const shadow = new THREE.Mesh(new THREE.CircleGeometry(.32, 16), new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: .3 }));
+  shadow.rotation.x = -Math.PI / 2; shadow.position.y = .015; root.add(shadow);
+  scene.add(root);
+  return { root, body, hip, legs, knees, arms, elbows, shadow, mats, head, look: L, yaw: L.yaw || 0 };
+}
+// Kamerayla oyuncu arasında kalan yolcu saydamlaşır, görüşü kapatmaz.
+// Derinlik yazmaya devam eder: saydam yolcunun içi (yüzü, öbür kolu) arkasından görünmez.
+function setFade(b, o) { for (const m of b.mats) m.opacity = o; b.shadow.visible = o > .5; }
+function sitPose(b, on, hold = false) {
+  b.legs.forEach((l, i) => { l.position.y = on ? .1 : .82; l.rotation.set(on ? 1.45 : 0, 0, on ? (i ? .06 : -.06) : 0); b.knees[i].rotation.x = on ? -1.4 : 0; });
+  b.hip.position.y = on ? .1 : .82;
+  if (on) b.arms.forEach((a, i) => { if (hold && i === 1) return; a.rotation.set(.22, 0, (i ? -1 : 1) * .1); b.elbows[i].rotation.x = .8; });
+}
+const disposePerson = (b) => { scene.remove(b.root); b.shadow.geometry.dispose(); b.shadow.material.dispose(); b.mats.forEach((m) => m.dispose()); };
+
+const player = makePerson(PLAYER_LOOK);
+// Peronda bekleyenler: aynı insan modeli, yüzleri araca dönük; yol kıvrımına uysunlar diye bükülür.
+{
+  const r = rng(9), x0 = BUS.halfW + .06;
+  for (let k = 0; k < 7; k++) {
+    const b = makePerson(randomLook(k === 5));
+    scene.remove(b.root); station.add(b.root); b.shadow.visible = false;
+    b.root.position.set(x0 + 1.1 + r() * 2.2, 0, -12 + k * 3.7 + r());
+    b.body.rotation.y = Math.PI / 2 + (r() - .5) * .9;
+    b.arms.forEach((a, i) => { a.rotation.z = (i ? 1 : -1) * .06; b.elbows[i].rotation.x = .15 + r() * .5; });
+    if (k === 5) b.hip.rotation.x = -.3;
+    bendify(b.root);
+  }
+}
+// Kahve bardağı: oyuncunun sağ elinde; içindeki kahve azaldıkça seviye düşer, döküldükçe damlar.
+const cup = new THREE.Group();
+{ const c = new THREE.Mesh(new THREE.CylinderGeometry(.05, .04, .11, 12), M(0xf3efe6)); cup.add(c); }
+const coffeeTop = new THREE.Mesh(new THREE.CircleGeometry(.045, 12), M(0x4a2c17)); coffeeTop.rotation.x = -Math.PI / 2; cup.add(coffeeTop);
+cup.position.y = -.62; cup.scale.setScalar(1.6); player.arms[1].add(cup); cup.visible = false;
+const drops = Array.from({ length: 14 }, () => { const d = new THREE.Mesh(new THREE.SphereGeometry(.018, 6, 4), M(0x4a2c17)); d.visible = false; d.userData.v = new THREE.Vector3(); scene.add(d); return d; });
+let dropAcc = 0;
+const tmpV = new THREE.Vector3();
+
+let crowdMeshes = [], seatedMeshes = [];
+function buildCrowd() {
+  for (const c of crowdMeshes) disposePerson(c);
+  crowdMeshes = G.npcs.map((n) => { if (!n.look || !!n.look.elder !== !!n.elder) n.look = randomLook(n.elder); return makePerson(n.look, true); });
+  G.crowdDirty = false;
+}
+// Koltuklarda oturanlar (oyuncu dahil değil)
+function buildSeated() {
+  for (const c of seatedMeshes) disposePerson(c);
+  seatedMeshes = [];
+  G.seatOcc.forEach((o, i) => {
+    if (!o || o === "player") return;
+    const [x, z] = SEATS[i];
+    if (!o.look) o.look = randomLook(o.elder);
+    const p = makePerson(o.look, true);
+    p.root.position.set(x, .38, z); sitPose(p, true);
+    seatedMeshes.push(p);
+  });
+  G.seatsDirty = false;
+}
+const targetRing = new THREE.Mesh(new THREE.RingGeometry(.16, .22, 24), new THREE.MeshBasicMaterial({ color: 0xffc82e }));
+targetRing.rotation.x = -Math.PI / 2; targetRing.position.y = .02; scene.add(targetRing);
+
+function poseBody(b, p, amount, now, walkPhase = 0, walking = false, room = null, lean = null, hold = false) {
+  // p: denge sapması (x sağ, y arka), dünya ekseninde; gövdenin baktığı yöne çevrilir. Kalça bu yöne yatar.
+  if (b.yaw) { const c = Math.cos(b.yaw), s = Math.sin(b.yaw); p = [p[0] * c - p[1] * s, p[0] * s + p[1] * c]; }
+  b.body.rotation.y = b.yaw;
+  b.hip.rotation.z = -p[0] * amount * .5;
+  b.hip.rotation.x = p[1] * amount * .5;
+  b.hip.position.x = p[0] * .06; b.hip.position.z = p[1] * .06;
+  const m = Math.hypot(p[0], p[1]) * amount;
+  const fl = Math.max(0, m - .45);
+  b.arms.forEach((a, i) => {
+    const s = i ? 1 : -1;
+    let rz = .06 + fl * (1.5 + .5 * Math.sin(now * 18 + i)), rx = fl * .6 * Math.sin(now * 13 + i * 2) + (walking ? -Math.sin(walkPhase + i * Math.PI) * .32 : 0);
+    let el = .16 + fl * (.5 + .4 * Math.sin(now * 15 + i * 3)) + (walking ? .12 : 0);
+    if (b.look.cane && i === 1 && fl < .2) { rx = .1 + (walking ? Math.sin(walkPhase) * .12 : 0); el = .1; } // bastonu yere dayalı
+    if (hold && i === 1) { a.rotation.set(.7, 0, .55); b.elbows[i].rotation.x = 0; return; } // bardağı önde tutar
+    if (lean && lean[0] * s > .5) { rz = .45; rx = 0; el = .1; } // yaslandığı yere eliyle dayanır
+    if (room) rz = Math.min(rz, Math.asin(Math.max(-.25, Math.min(1, room[i] / .55)))); // duvar, direk, insan içine girmez
+    a.rotation.z = s * rz; a.rotation.x = rx; b.elbows[i].rotation.x = el;
+  });
+  b.legs.forEach((l, i) => {
+    const ph = walkPhase + i * Math.PI;
+    l.rotation.x = walking ? Math.sin(ph) * .45 : 0; l.rotation.z = (i ? 1 : -1) * Math.min(.25, fl * .3);
+    b.knees[i].rotation.x = walking ? -Math.max(0, Math.cos(ph)) * .85 : -Math.min(.3, fl * .2); // öne savrulan bacağın dizi bükülür
+  });
+}
+
+const strapState = { s: [0, 0], v: [0, 0] };
+let lastFrame = 0, acc = 0;
+
+// Domino: sondan başa, her beden önündekinin o anki açısına göre ne kadar eğilebileceğini bulur ve oraya hızlanarak düşer.
+function toppleChain(dt) {
+  const ch = G.chain || [];
+  if (!ch.length) return;
+  let phi = null;
+  for (let i = ch.length - 1; i >= 0; i--) {
+    const n = ch[i], was = n.fallT; n.fallT += dt;
+    if (was < 0 && n.fallT >= 0) { tone(330 - i * 30, .14, "triangle", .1); thud(); buzz(30); }
+    const lim = Math.min(n.fallMax, phi === null ? n.fallMax : Math.max(0, leanOnto(ch[i + 1].gap, phi)));
+    if (n.fallT > 0) n.fallAng = Math.min(lim, n.fallAng + (.4 + 7 * n.fallT) * dt);
+    else n.fallAng = Math.min(lim, n.fallAng);
+    phi = n.fallAng;
+  }
+  const lim = Math.min(G.fallMax, Math.max(0, leanOnto(ch[0].gap, phi)));
+  G.fallAng = Math.min(lim, G.fallAng + (.4 + 7 * G.fallT) * dt);
+}
+
+// Gelecek sarsıntı, itileceğin yönün ekran kenarında 1,4 saniye önceden belirir ve olay boyunca söner.
+const cueEls = { l: document.querySelector(".cue.l"), r: document.querySelector(".cue.r"), t: document.querySelector(".cue.t"), b: document.querySelector(".cue.b") };
+function updateCues(now) {
+  const o = { l: 0, r: 0, t: 0, b: 0 }; let pot = false;
+  if (G.state === "ride") for (const e of G.events) {
+    const lead = e.k === "pot" ? .9 : 1.4;
+    let a = 0;
+    if (G.t >= e.t - lead && G.t < e.t) a = .35 + .45 * (G.t - e.t + lead) / lead + .2 * Math.sin(now * 14);
+    else if (G.t >= e.t && G.t <= e.t + e.d) a = .8 * (1 - (G.t - e.t) / e.d);
+    if (a <= 0) continue;
+    if (e.k === "pot" && G.t >= e.t - lead) pot = true;
+    // v: oyuncunun itileceği yön (x sağ, y arka = ekranın altı)
+    if (e.v[0] > 0) o.r = Math.max(o.r, a * e.v[0]); if (e.v[0] < 0) o.l = Math.max(o.l, -a * e.v[0]);
+    if (e.v[1] > 0) o.b = Math.max(o.b, a * e.v[1]); if (e.v[1] < 0) o.t = Math.max(o.t, -a * e.v[1]);
+  }
+  for (const k in cueEls) {
+    cueEls[k].style.opacity = Math.max(0, Math.min(1, o[k])).toFixed(3);
+    cueEls[k].style.setProperty("--cue", pot ? "rgba(255, 255, 255, .7)" : "rgba(255, 200, 46, .75)");
+  }
+}
+const comboEl = $("combo"), comboB = comboEl.querySelector("b"), comboS = comboEl.querySelector("span");
+function updateCombo(dt) {
+  comboEl.hidden = !(G.state === "ride" || G.state === "doors" || G.state === "fallen");
+  if (comboEl.hidden) return;
+  const txt = "×" + G.mult;
+  if (comboB.textContent !== txt) comboB.textContent = txt;
+  if (G.multPop) { G.multPop = false; comboB.classList.remove("pop"); void comboB.offsetWidth; comboB.classList.add("pop"); }
+  G.multLost = Math.max(0, (G.multLost || 0) - dt * 1.5);
+  comboEl.classList.toggle("lost", G.multLost > 0);
+  comboS.textContent = Math.floor(G.score);
+}
+
+function render(dt, now) {
+  if (G.crowdDirty) buildCrowd();
+  if (G.seatsDirty) buildSeated();
+  // Kayışlar: kuvvet yönünde sallanan sarkaç
+  const S = strapState;
+  for (let i = 0; i < 2; i++) { S.v[i] += (G.F[i] * .09 - S.s[i] * 10 - S.v[i] * 2.2) * dt; S.s[i] += S.v[i] * dt; }
+  for (const st of straps) {
+    const w = Math.sin(now * 2.1 + st.phase) * .04 * G.speed;
+    st.g.rotation.x = -S.s[1] + w * .5; st.g.rotation.z = S.s[0] + w;
+  }
+  // Yolcular aynı kuvvetle yalpalar; binen dışarıdan girer, inen dışarı çıkar.
+  if (G.state === "fallen") toppleChain(dt);
+  G.npcs.forEach((n, i) => {
+    for (let k = 0; k < 2; k++) { n.v[k] += (G.F[k] * .06 - n.p[k] * 6 - n.v[k] * 2.5 + Math.sin(now * 1.3 + n.phase + k) * .05) * dt; n.p[k] += n.v[k] * dt; }
+    const b = crowdMeshes[i]; if (!b) return;
+    let ox = 0;
+    if (n.state === "board") ox = (n.boardSide || G.doorSide) * (1 - n.inT) * 1.1;
+    if (n.state === "exit") ox = n.exitSide * n.outT * 1.1;
+    b.root.position.set(n.x + ox, 0, n.z);
+    // Yürürken gittiği yöne, dururken kendi seçtiği yöne döner.
+    if (n.yaw === undefined) n.yaw = b.look.yaw;
+    if (G.state !== "fallen") {
+      const vx = n.x + ox - (n.lx ?? n.x + ox), vz = n.z - (n.lz ?? n.z), sp = Math.hypot(vx, vz) / Math.max(dt, 1e-3);
+      const want = sp > .25 ? Math.atan2(-vx, -vz) : (n.dozer && G.dozer && G.dozer.n === n ? 0 : b.look.yaw);
+      const d = Math.atan2(Math.sin(want - n.yaw), Math.cos(want - n.yaw));
+      n.yaw += d * Math.min(1, dt * (sp > .25 ? 7 : 2.5));
+    }
+    n.lx = n.x + ox; n.lz = n.z; b.yaw = n.yaw;
+    const moving = n.state === "walk" && n.wait === 0;
+    if (n.fallT !== undefined && G.state === "fallen") {
+      // Devrilen yolcu: kolları açılır, kökten devrilir (açıyı toppleChain hesaplar).
+      const e = n.fallT <= 0 ? 0 : Math.min(1, n.fallT / .45);
+      poseBody(b, [n.fallDir[0] * .9, n.fallDir[1] * .9], 1.4 * (1 - e * .6), now, 0, false);
+      b.root.rotation.set(n.fallDir[1] * n.fallAng, 0, -n.fallDir[0] * n.fallAng);
+    } else {
+      b.root.rotation.set(0, 0, 0);
+      poseBody(b, n.p, 1.4, now, n.wp, moving || n.state === "board" || n.state === "exit");
+    }
+    if (n.elder) b.hip.rotation.x -= .3; // hafif kambur
+    if (n.dozer && G.dozer && G.dozer.n === n && n.state === "stand" && G.sitting >= 0) {
+      // Uyuklayan: oturan oyuncuya doğru yatar, başı düşer; yığılınca omzuna dayanır.
+      const sx = Math.sign(SEATS[G.sitting][0] - seatFront(G.sitting)[0]), a = G.dozer.down ? 1 : G.dozer.a;
+      b.root.rotation.z = -sx * a * .34;
+      b.head.rotation.z = -sx * a * .5; b.head.position.y = .8 - a * .05;
+      b.hip.rotation.x += a * .15 + Math.sin(now * 1.5) * .03;
+    } else { b.head.rotation.z = 0; b.head.position.y = .8; }
+    const between = n.z > G.pos[1] + .2 && Math.abs(n.x - camera.position.x) < 1.1;
+    n.fade += ((between ? (n.rival || n.dozer ? .6 : .16) : 1) - n.fade) * Math.min(1, dt * 8); // kapıştığın rakip ve uyuklayan görünür kalır
+    b.root.visible = n.z < camera.position.z - .9;
+    setFade(b, n.fade);
+  });
+  for (const s of seatedMeshes) { s.hip.rotation.z = -S.s[0] * .25; }
+
+  // Oyuncu
+  const pr = player.root;
+  const openSide = G.state === "doors" || G.state === "arrived" ? G.doorSide : 0;
+  if (G.sitting >= 0) {
+    const [x, z] = SEATS[G.sitting];
+    pr.position.set(x, .38, z); pr.rotation.set(0, 0, 0);
+    poseBody(player, [0, 0], 0, now, 0, false, null, null, cup.visible);
+    sitPose(player, true, cup.visible);
+  } else {
+    sitPose(player, false);
+    pr.position.set(G.pos[0], 0, G.pos[1]); pr.rotation.set(0, 0, 0);
+    // Düşerken gövde eğimi sönümlenir, devrilmeyi kökten dönme üstlenir; toplam açı boş alanı aşmaz.
+    let e = 0;
+    if (G.state === "fallen") { G.fallT += dt; const k = Math.min(1, G.fallT / .5); e = k * k; }
+    const poseP = [G.p[0] * (1 - e), G.p[1] * (1 - e)];
+    poseBody(player, poseP, SHOW, now, G.walkPhase, G.walking, armRoom(G.pos[0], G.pos[1], poseP, openSide), G.lean, cup.visible);
+    if (G.state === "fallen") {
+      const ang = G.chain && G.chain.length ? G.fallAng : G.fallMax * e;
+      pr.rotation.z = -G.fallDir[0] * ang; pr.rotation.x = G.fallDir[1] * ang;
+      pr.position.y = -.05 * e;
+    }
+  }
+  targetRing.visible = !!G.target;
+  updateCues(now); updateCombo(dt);
+  if (G.target) targetRing.position.set(G.target[0], .02, G.target[1]);
+
+  // Kahve: bardak elde, seviye kalan kahveye göre; dökülürken damlar
+  const kahve = G.task && G.task.type === "kahve" && (G.state === "ride" || G.state === "fallen");
+  cup.visible = !!kahve;
+  if (kahve) {
+    cup.rotation.x = -.7 - player.hip.rotation.x; cup.rotation.z = -.55 - player.hip.rotation.z;
+    coffeeTop.visible = G.coffee > .35; coffeeTop.position.y = -.05 + .1 * Math.max(0, G.coffee);
+    dropAcc += (G.spilling || 0) * dt * 40;
+    while (dropAcc > 1) {
+      dropAcc -= 1;
+      const d = drops.find((o) => !o.visible); if (!d) break;
+      cup.getWorldPosition(d.position); d.visible = true;
+      d.userData.v.set((Math.random() - .5) * .6, .4, (Math.random() - .5) * .6);
+    }
+  }
+  for (const d of drops) if (d.visible) {
+    d.userData.v.y -= 9.8 * dt; d.position.addScaledVector(d.userData.v, dt);
+    if (d.position.y < .02) d.visible = false;
+  }
+
+  // Görevdeki boş koltuk parlar
+  const ks = G.task && G.task.type === "koltuk" && G.task.ok === null ? G.task.seat : -1;
+  seatGlow.visible = seatArrow.visible = seatBeam.visible = ks >= 0;
+  if (ks >= 0) {
+    seatGlow.position.set(SEATS[ks][0], .25, SEATS[ks][1]); seatGlow.material.opacity = .35 + .3 * (1 + Math.sin(now * 6)) / 2;
+    seatArrow.position.set(SEATS[ks][0], 2.0 + Math.sin(now * 4) * .08, SEATS[ks][1]); seatArrow.rotation.y = now * 2;
+    seatBeam.position.set(SEATS[ks][0], 1.1, SEATS[ks][1]); seatBeam.material.opacity = .22 + .14 * (1 + Math.sin(now * 6)) / 2;
+  }
+
+  // Kapılar ve işaretler: yalnızca durağın yanındaki kapılar açılır
+  for (const p of doorPanels) {
+    const o = openSide === p.userData.side ? 1 : 0;
+    const cur = p.position.z - p.userData.base;
+    p.position.z = p.userData.base + (cur + (o * p.userData.dir * .5 - cur) * Math.min(1, dt * 6));
+  }
+  for (const s of [-1, 1]) glowMats[s].opacity += ((openSide === s ? .95 : 0) - glowMats[s].opacity) * Math.min(1, dt * 4);
+  const atStop = openSide !== 0 || G.state === "missed";
+  const seg = curSeg(), mineSoon = seg && seg.mine && G.announced && G.state !== "arrived";
+  doorMarks.forEach((m) => { m.material.opacity = m.userData.side === G.doorSide && mineSoon ? .45 + .4 * (1 + Math.sin(now * 6)) / 2 : .15; });
+  doorLights.forEach((l) => l.material.color.setHex(G.announced && l.userData.side === G.doorSide && Math.sin(now * 8) > 0 ? 0xff9f1a : 0x553311));
+
+  // Dış dünya
+  let target = 0;
+  if (G.state === "ride") for (const e of G.events) {
+    if (e.k !== "left" && e.k !== "right") continue;
+    const tau = e.t - G.t;
+    if (tau < 2.5 && tau > -e.d) { target = (e.k === "left" ? -1 : 1) * (tau > 0 ? 1 - tau / 2.5 * .6 : 1); break; }
+  }
+  G.bend += (target - G.bend) * Math.min(1, dt * 2);
+  bendU.value = G.bend * .0035; // 60 m ilerde ~13 m yana kayar
+  const sv = G.speed * 14; // aracın hızı (m/sn)
+  // İstasyon: kalkışta geride kalır, son frenden önce ileride belirir ve araç durunca kapıların önüne gelir
+  let stZ = null, stName = "";
+  if (atStop) { stZ = 0; stName = seg.to; stRemain = null; }
+  else if (G.state === "ride") {
+    const dep = G.travel - G.segTravel0;
+    if (dep < 45) { stZ = dep; stName = G.seg > 0 ? curLine().seg[G.seg - 1].to : curLine().from; }
+    const lead = G.finalBrake ? G.finalBrake.t - G.t : 99;
+    if (lead < 6) {
+      if (stRemain === null) { stRemain = sv * Math.max(0, lead) + sv / 1.6 * (1 - Math.exp(-1.6 * (SEGS[seg.tpl].dur - G.finalBrake.t))); stTravel = G.travel; }
+      stZ = -Math.max(0, stRemain - (G.travel - stTravel)); stName = seg.to;
+    } else stRemain = null;
+  } else stRemain = null;
+  station.visible = stZ !== null;
+  if (stZ !== null) { station.position.z = stZ; setStationName(stName); }
+  // Köprü bölümü: kara gizlenir, deniz ve kuleler görünür; uzağı görmek için sis açılır
+  const onBridge = !!seg && seg.view === "kopru" && G.state !== "menu";
+  bridge.visible = onBridge; land.visible = !onBridge;
+  if (onBridge) bridge.position.z = G.travel - G.segTravel0;
+  const far = onBridge ? 2600 : 150;
+  if (scene.fog.far !== far) { scene.fog.far = far; scene.fog.near = onBridge ? 250 : 30; camera.far = onBridge ? 3200 : 175; camera.updateProjectionMatrix(); }
+  for (const m of scroll) {
+    const L = m.userData.loop; m.position.z = 30 - (((m.userData.off - G.travel) % L) + L) % L;
+    if (m.userData.lamp) m.visible = !(station.visible && Math.abs(m.position.z - station.position.z) < 17);
+  }
+  for (const c of cars) {
+    c.z += (sv + c.v) * dt;
+    if (c.z > 40) c.z -= 220; else if (c.z < -180) c.z += 220;
+    c.g.position.z = c.z;
+  }
+  oncZ += (sv + 14) * dt; if (oncZ > 60) oncZ = -260 - Math.random() * 300;
+  oncomingBus.position.z = oncZ; oncomingBus.visible = oncZ > -175;
+  // Öndeki metrobüs: fren olaylarında yavaşlar, sonra uzaklaşır
+  let ahead = null;
+  if (G.state === "ride") for (const e of G.events) if (e.k === "brake" && e !== G.finalBrake && G.t > e.t - 7 && G.t < e.t + e.d + 4) { ahead = e; break; }
+  busAhead.visible = !!ahead;
+  if (ahead) {
+    const gap = G.t < ahead.t ? 9 + (ahead.t - G.t) * AHEAD * 1.2 : G.t < ahead.t + ahead.d ? 9 : 9 + (G.t - ahead.t - ahead.d) ** 2 * 5;
+    busAhead.position.z = BUS.front - gap - 9.25;
+    const on = G.t > ahead.t - .6 && G.t < ahead.t + ahead.d;
+    for (const m of busAhead.userData.lights) m.color.setHex(on ? 0xff2a1a : 0x6a1010);
+  }
+  for (const [e, p] of propsFor) {
+    const dist = (e.t - G.t) * AHEAD;
+    p.visible = dist > -2 && dist < 55 && G.state === "ride";
+    p.position.z = BUS.front - 1 - dist;
+  }
+
+  // Kamera: karakterin arkasından ve yukarıdan. Anonstan sonra açılacak kapı tarafına döner.
+  G.shake = Math.max(0, G.shake - dt * 3);
+  const sh = G.shake * .05;
+  const camZ = Math.min(BUS.back - .5, G.pos[1] + 2.3);
+  G.doorLook += ((G.announced ? G.doorSide : 0) - G.doorLook) * Math.min(1, dt * 1.5);
+  camera.position.set(G.pos[0] * .5 - .12 - G.F[0] * .006 + Math.sin(now * 40) * sh, 2.2 + Math.cos(now * 47) * sh, camZ - G.F[1] * .008);
+  camera.lookAt(G.pos[0] * .4 + G.doorLook * 1.1, .1, G.pos[1] - 3.4);
+  camera.rotateZ(-G.F[0] * .006);
+  if (window.__denge && window.__denge.cam) { const c = window.__denge.cam; camera.position.set(...c.pos); camera.lookAt(...c.at); } // test: serbest kamera
+  renderer.render(scene, camera);
+}
+
+function frame(ts) {
+  const now = ts / 1000;
+  const dt = Math.min(.05, (ts - lastFrame) / 1000 || 0); lastFrame = ts;
+  if (!G.paused) {
+    updateTilt(dt);
+    acc += dt;
+    while (acc >= FIXED) { step(FIXED); acc -= FIXED; }
+  }
+  render(G.paused ? 0 : dt, now);
+  requestAnimationFrame(frame);
+}
+
+function resize() {
+  const r = $("app").getBoundingClientRect();
+  renderer.setSize(r.width, r.height, false);
+  camera.aspect = r.width / r.height;
+  camera.fov = r.width < r.height ? 80 : 55;
+  camera.updateProjectionMatrix();
+}
+addEventListener("resize", resize); resize();
+
+// ---------- Dokunma: kısa dokunuş → oraya yürü; sürükleme → (eğme yoksa) dengeyi parmakla ver ----------
+let thumb = null;
+const raycaster = new THREE.Raycaster(), floorPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0), hitPoint = new THREE.Vector3();
+function setWalkTarget(x, z) {
+  if (G.state !== "ride" && G.state !== "doors") return;
+  const pt = [x, z]; pushStatic(pt, BODY_R); G.target = pt;
+}
+function tapToWalk(cx, cy) {
+  const r = canvas.getBoundingClientRect();
+  raycaster.setFromCamera({ x: (cx - r.left) / r.width * 2 - 1, y: -((cy - r.top) / r.height) * 2 + 1 }, camera);
+  if (raycaster.ray.intersectPlane(floorPlane, hitPoint)) setWalkTarget(hitPoint.x, hitPoint.z);
+}
+canvas.addEventListener("pointerdown", (e) => {
+  e.preventDefault(); initAudio(); enableTilt();
+  if (thumb) return;
+  thumb = { id: e.pointerId, ox: e.clientX, oy: e.clientY, t0: performance.now(), drag: false };
+  try { canvas.setPointerCapture(e.pointerId); } catch (err) {}
+});
+canvas.addEventListener("pointermove", (e) => {
+  if (!thumb || e.pointerId !== thumb.id) return;
+  e.preventDefault();
+  let dx = (e.clientX - thumb.ox) / THUMB_RANGE, dy = (e.clientY - thumb.oy) / THUMB_RANGE;
+  if (!thumb.drag && Math.hypot(dx, dy) * THUMB_RANGE > 12) thumb.drag = true;
+  if (thumb.drag) { const m = Math.hypot(dx, dy); if (m > 1) { dx /= m; dy /= m; } G.j = [dx, dy]; }
+});
+const endThumb = (e) => {
+  if (!thumb || e.pointerId !== thumb.id) return;
+  if (!thumb.drag && performance.now() - thumb.t0 < 400) tapToWalk(e.clientX, e.clientY);
+  if (thumb.drag) G.j = [0, 0];
+  thumb = null;
+};
+canvas.addEventListener("pointerup", endThumb);
+canvas.addEventListener("pointercancel", endThumb);
+document.addEventListener("touchmove", (e) => { if (e.target === canvas) e.preventDefault(); }, { passive: false });
+
+// ---------- Telefonu eğme (jiroskop) ----------
+// iOS ve Android bu verileri yalnızca HTTPS sayfalara verir; iOS ayrıca bir dokunuşla izin ister.
+const tilt = { on: false, gamma: 0, beta: 0, beta0: null };
+function onOrient(e) {
+  if (e.gamma == null || e.beta == null) return;
+  tilt.on = true; tilt.gamma = e.gamma; tilt.beta = e.beta;
+  if (tilt.beta0 == null) tilt.beta0 = e.beta;
+}
+let tiltAsked = false;
+function enableTilt() { // dokunma olayının içinde çağrılmalı
+  if (tiltAsked) return; tiltAsked = true;
+  const DOE = window.DeviceOrientationEvent;
+  if (!DOE || !window.isSecureContext) return;
+  const listen = () => addEventListener("deviceorientation", onOrient);
+  if (typeof DOE.requestPermission === "function") DOE.requestPermission().then((r) => { if (r === "granted") listen(); }).catch(() => {});
+  else listen();
+}
+const deadZone = (v) => Math.sign(v) * Math.max(0, Math.abs(v) - DEAD_ZONE);
+function updateTilt(dt) {
+  if (!tilt.on || (thumb && thumb.drag)) return;
+  tilt.beta0 += (tilt.beta - tilt.beta0) * Math.min(1, dt / NEUTRAL_DRIFT);
+  const s = T.invert ? -1 : 1;
+  let x = s * deadZone(tilt.gamma) / T.tilt, y = s * deadZone(tilt.beta - tilt.beta0) / T.tilt;
+  const m = Math.hypot(x, y);
+  if (m > 1) { x /= m; y /= m; }
+  const e = Math.min(1, dt * 12);
+  G.j = [G.j[0] + (x - G.j[0]) * e, G.j[1] + (y - G.j[1]) * e];
+}
+
+// ---------- Ekranlar ----------
+const panel = $("panel"), overlay = $("overlay");
+const show = (html) => { panel.innerHTML = html; overlay.hidden = false; overlay.scrollTop = 0; };
+const hide = () => { overlay.hidden = true; };
+const begin = () => { initAudio(); wake(); hide(); G.paused = false; };
+function play(li) { begin(); startLine(li); }
+function resume() { begin(); restartSeg(); }
+function wake() { try { navigator.wakeLock && navigator.wakeLock.request("screen").catch(() => {}); } catch (e) {} }
+
+function showMenu() {
+  show(`<h1>Tutunmak yasak</h1>
+    <p>Telefonu eğ, ayakta kal. Yol boyunca görevini yap, durağında in.</p>
+    <button class="primary" id="go" type="button">Hatta bin</button>`);
+  $("go").onclick = () => { enableTilt(); play(0); };
+}
+
+function showArrived() {
+  const line = curLine(), last = G.line + 1 >= LINES.length;
+  const rows = line.seg.map((s, i) => s.task ? `<li>${G.results[i] ? "★ " + TASKS[s.task].ok : "☆ " + TASKS[s.task].fail}</li>` : "").join("");
+  show(`<h1>İndin!</h1>
+    <p>${line.name} · ${line.seg[line.seg.length - 1].to}</p>
+    <div class="stars">${"★".repeat(G.lastStars)}${"☆".repeat(3 - G.lastStars)}</div>
+    <ul>
+      <li>★ Durağında indin</li>
+      ${rows}
+      <li>${!G.lineStumbled && !G.lineFalls ? "★" : "☆"} Hiç tökezlemeden, düşmeden</li>
+    </ul>
+    <p class="score">Puan ${Math.floor(G.score)}${G.newBest ? " · YENİ REKOR!" : ` · Rekor ${best[G.line] || 0}`}</p>
+    <p class="small">Çarpma: ${G.bumps}</p>
+    ${last ? `<pre id="sum">${summary()}</pre><button id="copy" type="button">Sonucu kopyala</button>` : ""}
+    <button class="primary" id="next" type="button">${last ? "Baştan oyna" : "Sonraki hat"}</button>
+    <button id="retry" type="button">Bu hattı tekrar oyna</button>`);
+  $("next").onclick = () => play(last ? 0 : G.line + 1);
+  $("retry").onclick = () => play(G.line);
+  if (last) $("copy").onclick = (e) => {
+    const b = e.currentTarget;
+    if (!navigator.clipboard) { b.textContent = "Metni seçip kopyala"; return; }
+    navigator.clipboard.writeText(summary()).then(() => { b.textContent = "Kopyalandı"; }, () => { b.textContent = "Metni seçip kopyala"; });
+  };
+}
+
+// Oyunu durdurur; kapanana kadar zaman akmaz.
+function showPause() {
+  if (!overlay.hidden || (G.state !== "ride" && G.state !== "doors")) return;
+  G.paused = true; G.userPause = true;
+  show(`<h1>Durdu</h1>
+    <p>${curLine().name} · ${curSeg().to} yolunda</p>
+    <button class="primary" id="cont" type="button">Devam et</button>
+    <button id="menu" type="button">Hattın başına dön</button>`);
+  $("cont").onclick = () => { G.userPause = false; begin(); };
+  $("menu").onclick = () => { G.userPause = false; play(G.line); };
+}
+
+function showEnd(title, text) {
+  const seg = curSeg();
+  show(`<h1>${title}</h1>
+    <p>${text}</p>
+    <button class="primary" id="retry" type="button">${G.seg ? "Bu duraktan devam" : "Tekrar dene"}</button>
+    <button id="menu" type="button">Hattın başına dön</button>`);
+  $("retry").onclick = resume;
+  $("menu").onclick = () => play(G.line);
+}
+
+function summary() {
+  const stars = G.starsByLine.reduce((a, b) => a + (b || 0), 0);
+  return `Metro Denge Prototipi (hat yolculuğu)\nYıldız: ${stars}/${LINES.length * 3}\nDüşme: ${G.falls}\nKaçırılan durak: ${G.misses}\nKurtarma: ${G.rescues}\nKontrol: ${tilt.on ? "eğme" : "parmak"}, gizli yardım ${T.help ? "açık" : "kapalı"}\nAyarlar: eğim ${T.tilt}°, sarsıntı ${T.force}, ters ${T.invert ? "evet" : "hayır"}\nCihaz: ${navigator.userAgent}`.replace(/</g, "&lt;");
+}
+
+function showSettings() {
+  const wasPaused = G.paused; G.paused = true;
+  const wasHidden = overlay.hidden;
+  show(`<h1>Ayarlar</h1>
+    <div class="row"><label for="s-tilt">Tam güç için eğim (°) <output id="o-tilt"></output></label><input id="s-tilt" type="range" min="8" max="45" step="1"></div>
+    <div class="row"><label for="s-force">Sarsıntı gücü <output id="o-force"></output></label><input id="s-force" type="range" min=".6" max="1.4" step=".05"></div>
+    <div class="row"><label for="s-gain">Düzeltme gücü <output id="o-gain"></output></label><input id="s-gain" type="range" min="5" max="12" step=".5"></div>
+    <p class="small">Kontrol: ${tilt.on ? "telefonu eğme" : "parmakla sürükleme (eğme verisi gelmiyor)"}</p>
+    <button id="inv" type="button"></button>
+    <button id="help" type="button"></button>
+    <button id="snd" type="button"></button>
+    <button id="reset" type="button">Varsayılana dön</button>
+    <button class="primary" id="close" type="button">Kapat</button>`);
+  const bind = (k) => {
+    const i = $("s-" + k), o = $("o-" + k);
+    const sync = () => { i.value = T[k]; o.textContent = T[k]; };
+    i.oninput = () => { T[k] = +i.value; o.textContent = T[k]; saveT(); };
+    return sync;
+  };
+  const syncs = ["tilt", "force", "gain"].map(bind);
+  const sync = () => {
+    $("snd").textContent = T.sound ? "Sesi kapat" : "Sesi aç";
+    $("inv").textContent = T.invert ? "Eğim yönü: ters" : "Eğim yönü: normal";
+    $("help").textContent = T.help ? "Gizli yardım: açık" : "Gizli yardım: kapalı";
+  };
+  $("snd").onclick = () => { T.sound = !T.sound; saveT(); sync(); };
+  $("inv").onclick = () => { T.invert = !T.invert; saveT(); sync(); };
+  $("help").onclick = () => { T.help = !T.help; saveT(); sync(); };
+  $("reset").onclick = () => { Object.assign(T, DEFAULTS); saveT(); syncs.forEach((f) => f()); sync(); };
+  syncs.forEach((f) => f()); sync();
+  $("close").onclick = () => {
+    G.paused = wasPaused;
+    if (wasHidden) hide(); else rebindPanel();
+  };
+}
+// Ayarlardan dönünce önceki paneli yeniden göster.
+function rebindPanel() {
+  if (G.userPause) { overlay.hidden = true; showPause(); }
+  else if (G.state === "menu") showMenu();
+  else if (G.state === "arrived") showArrived();
+  else if (G.state === "fallen") showEnd("Düştün", FALL_LINES[G.falls % FALL_LINES.length]);
+  else if (G.state === "missed") showEnd("Durağı kaçırdın", MISS_LINES[G.misses % MISS_LINES.length]);
+}
+$("gear").onclick = showSettings;
+$("pause").onclick = showPause;
+// Uygulamadan çıkınca oyun durur, dönünce "Devam et" beklenir.
+document.addEventListener("visibilitychange", () => { if (document.hidden) { showPause(); G.paused = true; } });
+
+// Test kancası
+window.__denge = { frame, people: () => ({ crowdMeshes, seatedMeshes, player }), bridge, land, station, G, T, LINES, SEGS, SEATS, DOORS, step, startLine, startSeg, restartSeg, setWalkTarget, seatFront, FIXED, tilt, onOrient, pushStatic, BODY_R, doorPanels, glowMats, fall, nextInLine };
+
+startLine(0); G.state = "menu"; setLed("Hatta bin"); setTask(); flash("", C.text);
+showMenu();
+requestAnimationFrame(frame);
+</script>
+</body>
+
+</html>
