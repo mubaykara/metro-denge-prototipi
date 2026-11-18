@@ -46,6 +46,13 @@ canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block
 }
 #task.ok { color: var(--safe); border-color: var(--safe); }
 #task.fail { color: var(--danger); border-color: var(--danger); }
+/* Dert çipi: dertte görev olmadığı için #task ile aynı yeri kullanır */
+#dert {
+  position: absolute; z-index: 2; left: 10px; top: calc(52px + env(safe-area-inset-top, 0px)); max-width: calc(100% - 20px);
+  padding: 5px 10px; border-radius: 6px; background: rgba(11, 13, 16, .85); border: 1px solid #2a2f36;
+  font: 700 15px/1.2 var(--display); letter-spacing: .04em; text-transform: uppercase; color: var(--text);
+}
+#dert.gec { color: var(--danger); border-color: var(--danger); }
 #gear {
   position: absolute; z-index: 2; right: 10px; top: calc(10px + env(safe-area-inset-top, 0px));
   font: 600 13px var(--body); color: var(--muted); background: var(--wall);
@@ -95,6 +102,10 @@ canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block
 #panel p { margin: 0; font-size: 16px; line-height: 1.45; color: var(--text); }
 #panel ul { margin: 0; padding-left: 20px; display: grid; gap: 6px; font-size: 15px; line-height: 1.4; }
 #panel .small { font-size: 14px; color: var(--muted); }
+#panel h2 { margin: 6px 0 0; font: 700 22px/1 var(--display); letter-spacing: .04em; text-transform: uppercase; color: var(--muted); }
+#panel button.dert { text-align: left; font-size: 20px; }
+#panel button.dert small { display: block; margin-top: 4px; font: 400 14px/1.35 var(--body); letter-spacing: 0; text-transform: none; color: var(--muted); }
+#panel .dsat { font-size: 15px; line-height: 1.4; color: var(--muted); }
 #panel .stars { font: 700 44px var(--display); color: var(--sign); letter-spacing: .1em; }
 #panel .score { font: 700 22px var(--display); letter-spacing: .04em; color: var(--text); }
 #panel button {
@@ -121,6 +132,7 @@ pre {
   <canvas id="game" role="img" aria-label="Metro vagonunun içinde ayakta duran karakter, yolcular ve kapılar"></canvas>
   <div id="led"></div>
   <div id="task" hidden></div>
+  <div id="dert" hidden></div>
   <button id="gear" type="button">Ayarlar</button>
   <button id="pause" type="button" aria-label="Duraklat"><i></i><i></i></button>
   <div class="cue l"></div><div class="cue r"></div><div class="cue t"></div><div class="cue b"></div>
@@ -315,9 +327,11 @@ const LINES = [
 // Aktarma testi (adrese ?aktarma eklenince): her hat tek kısa yola iner. 12 saniyede durağına varırsın,
 // inip perondan başka araca binersin; inme ve binme döngüsü beklemeden denenir. Görev yok.
 const QUICK = new URLSearchParams(location.search).has("aktarma");
+// ?dert ile birlikte kullanılınca hatlar kısalmaz (derdin hedefi ara durak ya da başka hat olabilir); yalnız her yol 12 saniyeye iner.
+const QUICK_DERT = QUICK && new URLSearchParams(location.search).has("dert");
 if (QUICK) {
   SEGS.push({ dur: 12, sway: .5, ev: [ev(1.2, "accel", 4.5, 1.2), ev(4.4, "left", 5, 1.4), ev(8.6, "brake", 5, 2.6)] });
-  for (const l of LINES) l.seg = [{ ...l.seg[l.seg.length - 1], tpl: SEGS.length - 1, task: null }];
+  for (const l of LINES) l.seg = QUICK_DERT ? l.seg.map((q) => ({ ...q, tpl: SEGS.length - 1, task: null })) : [{ ...l.seg[l.seg.length - 1], tpl: SEGS.length - 1, task: null }];
 }
 // Oyuncak beden denemesi (adrese ?stil eklenince): iri kafa, iri el ve ayak, tombul gövde, karikatür yüz, yumuşak hareket.
 // Yalnız insanların görüntüsü değişir; araç, kurallar, denge ve çarpışma aynıdır.
@@ -343,6 +357,28 @@ const TASKS = {
   koltuk: { label: "Boşalan koltuğu kap", ok: "Koltuğu kaptın", fail: "Koltuğu kaptırdın" },
   yasli: { label: "Yaşlı amcaya yol aç", ok: "Amca oturdu", fail: "Amca ayakta kaldı" },
 };
+// ---------- Dert sistemi: kanca dağıtıcı ----------
+// Ortak sistemler ve tehlikeler (MODS) hep çalışır; dertler (DERTLER) yalnız seçiliyken. Kancaların tam listesi ve çağrı yerleri sözleşmede.
+// ?test (mekanik testi) hiçbir kancayı çalıştırmaz.
+const MODS = [];     // {id, ...kancalar}: ortak sistemler ve tehlikeler
+const DERTLER = {};  // id -> dert tanımı
+const dertTanim = () => (G.dert ? DERTLER[G.dert] : null);
+function kanca(ad, ...a) { if (TEST !== null) return; for (const m of MODS) if (m[ad]) m[ad](...a); const d = dertTanim(); if (d && d[ad]) d[ad](...a); }
+function kancaSor(ad, ...a) {
+  if (TEST !== null) return null;
+  for (const m of MODS) if (m[ad]) { const r = m[ad](...a); if (r) return r; }
+  const d = dertTanim(); if (d && d[ad]) { const r = d[ad](...a); if (r) return r; }
+  return null;
+}
+// engel kancası bir yazı dönerse işlem yapılmaz; yazı en çok 1,2 saniyede bir ekrana çıkar.
+let engelT = -9e3;
+function engelVar(ne) {
+  const y = kancaSor("engel", ne); if (!y) return false;
+  const t = performance.now(); if (t - engelT > 1200) { engelT = t; flash(y, C.danger); }
+  return true;
+}
+// Dert modunda hat görevleri kapalıdır.
+const segGorev = (s) => (G.dert ? null : s.task);
 const FALL_LINES = [
   "Yanındaki amcanın kucağına oturdun.",
   "Çantan ayakta kaldı, sen kalamadın.",
@@ -376,6 +412,7 @@ const G = {
   lineStumbled: false, lineFalls: 0, bumps: 0, snap: null, crowdDirty: false, seatsDirty: false,
   starsByLine: [], lastStars: 0, falls: 0, misses: 0, rescues: 0,
   score: 0, free: 0, mult: 1, knocked: 0,
+  dert: null, ds: null, ortak: {}, dertSon: null, mod: { yuru: 1, kapi: 1, toparla: 1, kuvvet: 1 }, isaretKoltuk: -1,
 };
 // Tutunmama çarpanı: yaslanmadan, oturmadan, tökezlemeden geçen her 4 saniye çarpanı bir artırır (en çok ×5).
 // Yaslanınca ya da tökezleyince ×1'e döner. Az kalsın anı çarpanla ödüllendirilir.
@@ -411,14 +448,16 @@ function findSpot(cx, cz, rad, skip, radZ = rad) {
 
 function startLine(li, seg0 = 0) {
   const line = li < 0 ? TEST_LINE : LINES[li];
+  const ilk = G.state !== "platform"; // false: perondan yeni araca biniliyor (dert ve ortak durum sürer)
   if (G.state !== "platform") { if (G.pl && G.pl.ghost) scene.remove(G.pl.ghost); G.pl = null; G.busZ = 0; G.code = null; } // menüden baştan başlatma
   G.line = li; G.seg = G.seg0 = seg0; G.rnd = rng(31 + li * 7 + seg0 * 3);
   G.lineStumbled = false; G.lineFalls = 0; G.bumps = 0; G.results = []; G.score = 0; G.free = 0; G.mult = 1;
   G.pos = [...START]; G.sitting = -1; G.pendingSeat = -1; G.npcs = [];
   // Koltuklar dolu ya da boş; ayakta duranların çoğu oyuncunun çevresinde. Bazıları ara duraklarda inecek.
   G.seatOcc = SEATS.map(() => (G.rnd() < line.seat ? { color: NPC_COLORS[Math.floor(G.rnd() * NPC_COLORS.length)] } : null));
-  const around = Math.ceil(line.crowd * .6);
-  for (let k = 0; k < line.crowd; k++) {
+  const dt0 = dertTanim(), ek = ilk && dt0 && dt0.basla && dt0.basla.kalabalik || 0, toplam = line.crowd + ek;
+  const around = Math.ceil(toplam * .6);
+  for (let k = 0; k < toplam; k++) {
     const s = k < around ? findSpot(START[0], START[1], 1.5) : findSpot(0, 0, 1, null, 8.5);
     if (!s) continue;
     const n = npc(s[0], s[1]);
@@ -426,6 +465,8 @@ function startLine(li, seg0 = 0) {
     G.npcs.push(n);
   }
   G.crowdDirty = G.seatsDirty = true;
+  kanca("hat", ilk);
+  if (ilk) tehlikeKur(); // aktarmada oyuncunun gerçek yeri boardBus'ta belli olur; tehlike orada dağıtılır
   startSeg();
   if (li >= 0) flash(`Senin durağın: ${line.seg[line.seg.length - 1].to}`, C.sign, 1800);
 }
@@ -440,22 +481,26 @@ function startSeg(restored = false) {
   G.dozer = null; G.sitT = 0;
   G.wob = null; G.wobNext = 3; G.swing = null; for (const n of G.npcs) n.wob = null;
   G.squeeze = false; G.blockT = 0; G.exitWant = false; G.grab = null; G.lunge = null; G.wave = 0; G.gagT = 5;
-  G.events = tpl.ev.map((e) => ({ ...e, warned: false, thud: false }));
+  G.events = tpl.ev.map((e) => ({ ...e, warned: false, thud: false, fired: false }));
   G.segTravel0 = G.travel;
   G.finalBrake = G.events.filter((e) => e.k === "brake").pop();
+  // LED yazısı kancalardan önce yazılır: modüller `yol` içinde üstüne yazabilsin.
+  setLed(seg.test ? "Tutunmak yasak" : G.line === 0 && G.seg === 0 ? "Yürümek için yere dokun" : (seg.mine ? `Senin durağın: ${seg.to}` : `Sıradaki durak: ${seg.to}`));
   if (!restored) {
-    G.task = seg.task ? { type: seg.task, ok: null, seat: -1, rival: false } : null;
+    const gor = segGorev(seg);
+    G.task = gor ? { type: gor, ok: null, seat: -1, rival: false } : null;
     if (G.task && G.task.type === "koltuk") {
       if (G.pendingSeat < 0) G.pendingSeat = pickSeat(); // ilk yolda koltuk sessizce boşalır
       G.task.seat = G.pendingSeat; G.seatOcc[G.task.seat] = null; G.seatsDirty = true;
     }
     G.pendingSeat = -1;
+    kanca("yol", false);
     G.snap = clone({ npcs: G.npcs, seatOcc: G.seatOcc, pos: G.pos, sitting: G.sitting, task: G.task, score: G.score });
   }
   G.coffee = 1;
   buildProps();
-  setLed(seg.test ? "Tutunmak yasak" : G.line === 0 && G.seg === 0 ? "Yürümek için yere dokun" : (seg.mine ? `Senin durağın: ${seg.to}` : `Sıradaki durak: ${seg.to}`));
   setTask();
+  if (restored) kanca("yol", true);
 }
 function restartSeg() {
   const s = clone(G.snap);
@@ -468,17 +513,17 @@ function restartSeg() {
 function pickSeat(far = false) {
   let best = -1, score = -1;
   SEATS.forEach(([x, z], i) => {
-    if (!SEAT_AISLE[i] || !G.seatOcc[i] || G.seatOcc[i] === "player") return;
+    if (!SEAT_AISLE[i] || !G.seatOcc[i] || G.seatOcc[i] === "player" || G.seatOcc[i].yoldas) return;
     const d = Math.hypot(x - G.pos[0], z - G.pos[1]);
     const sc = -Math.abs(d - (far ? 3.5 : 2.6)) - (z > G.pos[1] - .8 ? 100 : 0);
     if (d > 1.2 && (best < 0 || sc > score)) { best = i; score = sc; }
   });
-  if (best < 0) best = SEATS.findIndex((_, i) => SEAT_AISLE[i] && G.seatOcc[i] !== "player");
+  if (best < 0) best = SEATS.findIndex((_, i) => SEAT_AISLE[i] && G.seatOcc[i] !== "player" && !(G.seatOcc[i] && G.seatOcc[i].yoldas));
   return best;
 }
 // Koltuktaki yolcu kalkar ve kapıya yürür.
 function seatedLeaves(i, side) {
-  const occ = G.seatOcc[i]; if (!occ || occ === "player") return;
+  const occ = G.seatOcc[i]; if (!occ || occ === "player" || occ.yoldas) return; // yoldaş kendiliğinden inmez
   G.leaveQueue.push({ seat: i, side });
 }
 // Yeni nokta birine değiyorsa ve ona yaklaşıyorsa engel sayılır (zaten değen ikisi uzaklaşabilsin).
@@ -494,7 +539,7 @@ function processLeaves(force = false) {
     const free = !hitsPerson(f, 2 * BODY_R) && (G.sitting >= 0 || Math.hypot(f[0] - G.pos[0], f[1] - G.pos[1]) >= 2 * BODY_R);
     if (!free && !force) return true;
     G.seatOcc[seat] = null; G.seatsDirty = true;
-    if (free) { const n = npc(f[0], f[1], { color: occ.color, look: occ.look, alightAt: G.seg }); G.npcs.push(n); G.crowdDirty = true; sendToDoor(n, side); }
+    if (free) { const n = npc(f[0], f[1], { color: occ.color, look: occ.look, alightAt: G.seg, yoldas: occ.yoldas, teh: occ.teh, elder: !!occ.yoldas && !!occ.elder }); G.npcs.push(n); G.crowdDirty = true; sendToDoor(n, side); }
     return false;
   });
 }
@@ -505,6 +550,9 @@ function sendToDoor(n, side) {
 
 // ---------- Fizik adımı (çizimden ayrı, konsoldan test edilebilir) ----------
 function step(dt) {
+  if (G.state === "platform" || G.state === "ride" || G.state === "doors") { // çarpanlar her adımda 1'den başlar, modüller çarpar
+    const M = G.mod; M.yuru = M.kapi = M.toparla = M.kuvvet = 1; kanca("mod", M);
+  }
   if (G.state === "platform") return updatePlatform(dt);
   if (G.state !== "ride" && G.state !== "doors") return;
   const seg = curSeg(), tpl = SEGS[seg.tpl];
@@ -516,6 +564,7 @@ function step(dt) {
     for (const e of G.events) {
       if (!e.warned && G.t >= e.t - 1.4) { e.warned = true; beep(e.k === "pot" ? 620 : 440, .09); buzz(25); }
       if (G.t >= e.t && G.t <= e.t + e.d) {
+        if (!e.fired) { e.fired = true; kanca("olay", "sarsinti", { k: e.k, s: e.s, v: e.v, d: e.d }); }
         const env = Math.min(1, (G.t - e.t) / .12) * Math.min(1, (e.t + e.d - G.t) / .2);
         fx += e.v[0] * e.s * env; fy += e.v[1] * e.s * env;
         if (e.k === "accel") G.speedTarget = 1;
@@ -526,7 +575,7 @@ function step(dt) {
     const sw = tpl.sway * .6 * G.speed; // yalnızca canlılık katar
     fx += Math.sin(G.t * 1.3 + 1) * sw + Math.sin(G.t * 2.9) * sw * .5;
     fy += Math.sin(G.t * 1.7 + 2) * sw * .8;
-    fx *= T.force; fy *= T.force;
+    fx *= T.force * G.mod.kuvvet; fy *= T.force * G.mod.kuvvet;
   }
   G.F = [fx, fy];
   G.speed += (G.speedTarget - G.speed) * Math.min(1, dt * 1.6);
@@ -546,7 +595,7 @@ function step(dt) {
     const effort = Math.max(0, Math.min(1, -(G.j[0] * G.p[0] + G.j[1] * G.p[1]) / m0 * 2));
     const a = T.help ? G.assist * effort : 0;
     fx *= 1 - .4 * a; fy *= 1 - .4 * a;
-    const k = T.recover * (1 + 1.5 * a) * (1 - (1 - WALK_RECOVER) * wk);
+    const k = T.recover * G.mod.toparla * (1 + 1.5 * a) * (1 - (1 - WALK_RECOVER) * wk);
     const edge = Math.max(0, m0 - .7) * 7 * (.5 + G.assist) * (T.help ? effort : 0);
     G.v[0] += (-G.p[0] * k + fx + G.j[0] * T.gain - G.v[0] * DAMP - G.p[0] / m0 * edge) * h;
     G.v[1] += (-G.p[1] * k + fy + G.j[1] * T.gain - G.v[1] * DAMP - G.p[1] / m0 * edge) * h;
@@ -583,6 +632,7 @@ function step(dt) {
       G.stumble = STUMBLE_TIME; G.lineStumbled = true; G.target = null; G.assist = Math.min(1, G.assist + .25);
       if (G.task && G.task.type === "kahve" && G.task.ok === null) G.coffee -= .2;
       flash("DİKKAT!", C.danger); beep(180, .2); buzz(120);
+      kanca("olay", "tokezle");
     }
   }
   updateTask(dt);
@@ -590,23 +640,25 @@ function step(dt) {
   updateMult(dt);
   updateWob(h);
   updateGags(h);
+  kanca("adim", dt, h);
 
   if (seg.test) { if (G.t >= tpl.dur) testDone(); return; }
   if (G.state === "ride" && !G.announced && G.t >= tpl.dur - ANNOUNCE) {
-    G.announced = true; chime();
+    G.announced = true; if (!kancaSor("anonsSessiz")) chime(); // uykulu oyuncu anonsu duymaz (Son sefer)
     setLed(`${seg.mine ? "Senin durağın: " : ""}${seg.to} · Kapılar ${sideName(seg.side)} açılacak`, true);
+    kanca("olay", "anons");
   }
   if (G.state === "ride" && G.t >= tpl.dur) return openDoors();
   if (G.state === "doors") {
     if (seg.mine) {
-      if (G.sitting < 0 && inDoorZone(G.pos[0], G.pos[1], seg.side) && G.stumble <= 0) return arrive();
+      if (G.sitting < 0 && inDoorZone(G.pos[0], G.pos[1], seg.side) && G.stumble <= 0 && !engelVar("in")) return arrive();
       // Kapıya yaklaşmış olana kapı fark ettirmeden biraz daha açık kalır.
       const dist = Math.min(...DOORS.map((d) => Math.hypot(seg.side * .8 - G.pos[0], d - G.pos[1])));
       G.doorT -= dt * (T.help && dist < 1.6 ? .45 : 1);
       if (G.doorT <= 0) return missed();
     } else {
       // Ara durak: kapıya dokunup yürüdüysen burada inersin (kapı ağzında durmak tek başına indirmez).
-      if (G.exitWant && G.sitting < 0 && inDoorZone(G.pos[0], G.pos[1], seg.side) && G.stumble <= 0) return arrive();
+      if (G.exitWant && G.sitting < 0 && inDoorZone(G.pos[0], G.pos[1], seg.side) && G.stumble <= 0 && !engelVar("in")) return arrive();
       G.doorT -= dt;
       if (G.doorT <= 0) closeDoors();
     }
@@ -628,7 +680,7 @@ function clearDoorways(side) {
 }
 function openDoors() {
   const seg = curSeg(), line = curLine();
-  G.state = "doors"; G.doorT = seg.mine ? DOOR_OPEN : STOP_TIME; G.doorSide = seg.side;
+  G.state = "doors"; G.doorT = (seg.mine ? DOOR_OPEN : STOP_TIME) * G.mod.kapi; G.doorSide = seg.side;
   doorSound();
   setLed(seg.mine ? "Kapılar açıldı · İn!" : `${seg.to} · inmek için kapıya dokun`, true);
   finishTask();
@@ -636,11 +688,11 @@ function openDoors() {
   let shout = 0;
   for (const n of G.npcs) if (n.alightAt === G.seg && n.state === "stand") { sendToDoor(n, seg.side); if (shout < 2) say(n, shout++ ? "Müsaade!" : "İnecek var!", "talk", 1.6, shout * .5); }
   clearDoorways(seg.side);
-  if (seg.mine) return;
+  if (seg.mine) return kanca("olay", "kapi");
   // Sonraki yolun görevine göre biri koltuktan kalkar, biri biner.
-  const next = line.seg[G.seg + 1];
-  if (next && next.task === "koltuk") { G.pendingSeat = pickSeat(); seatedLeaves(G.pendingSeat, seg.side); }
-  if (next && next.task === "yasli") {
+  const next = line.seg[G.seg + 1], nextGor = next && segGorev(next);
+  if (nextGor === "koltuk") { G.pendingSeat = pickSeat(); seatedLeaves(G.pendingSeat, seg.side); }
+  if (nextGor === "yasli") {
     const s = pickSeat(true); seatedLeaves(s, seg.side);
     G.boardQueue.push({ elder: true, toSeat: s });
   }
@@ -649,6 +701,7 @@ function openDoors() {
     G.boardQueue.push({ alightAt: at });
   }
   G.boardT = .4;
+  kanca("olay", "kapi");
 }
 function closeDoors() {
   // Kapı kapanınca binemeyen kalır, inemeyen bir sonraki durağa kadar devam eder.
@@ -656,10 +709,14 @@ function closeDoors() {
   G.npcs = G.npcs.filter((n) => n.state !== "exit" && n.state !== "board");
   for (const n of G.npcs) if (n.exitSide) { n.exitSide = 0; n.goal = null; n.state = "stand"; n.alightAt = -1; }
   // Görevi biten yolda hâlâ koltuğuna varamamış amca kapı kapanırken oturmuş sayılır.
-  if (curSeg().task === "yasli") for (const n of G.npcs) if (n.elder && n.toSeat >= 0 && !G.seatOcc[n.toSeat]) { G.seatOcc[n.toSeat] = { color: n.color, elder: true, look: n.look }; n.gone = true; G.seatsDirty = true; }
+  if (segGorev(curSeg()) === "yasli") for (const n of G.npcs) if (n.elder && n.toSeat >= 0 && !G.seatOcc[n.toSeat]) { G.seatOcc[n.toSeat] = { color: n.color, elder: true, look: n.look, yoldas: n.yoldas, teh: n.teh }; n.gone = true; G.seatsDirty = true; }
   G.npcs = G.npcs.filter((n) => !n.gone);
   G.crowdDirty = true;
   doorSound();
+  // Dert hedefi olan durak kapanırken oyuncu hâlâ içerideyse durak kaçırılmıştır; yolculuk sürer.
+  const dd = dertTanim();
+  if (dd && G.ds && !G.ds.kacirdi && curSeg().to === dd.hedef) { G.ds.kacirdi = true; flash("DURAĞI KAÇIRDIN", C.danger, 1600); }
+  kanca("olay", "kapandi");
   G.seg++;
   startSeg();
 }
@@ -774,7 +831,7 @@ function npcArrived(n) {
   if (n.toSeat >= 0) { // koltuğa oturur
     const i = n.toSeat;
     if (!G.seatOcc[i]) {
-      G.seatOcc[i] = { color: n.color, elder: n.elder, look: n.look }; G.seatsDirty = true;
+      G.seatOcc[i] = { color: n.color, elder: n.elder, look: n.look, yoldas: n.yoldas, teh: n.teh }; G.seatsDirty = true;
       n.gone = true; G.npcs = G.npcs.filter((o) => !o.gone); G.crowdDirty = true;
       if (G.task && G.task.ok === null) {
         if (G.task.type === "yasli" && n.elder) taskDone(true, "SAĞ OL EVLADIM!");
@@ -805,7 +862,7 @@ function updateTask(dt) {
     const pd = dist(G.pos[0], G.pos[1]);
     // Rakip: koltuğa yakın duran biri. Sen yaklaşınca, aşağı yukarı seninle aynı anda varacağı an yürür; koltuğun önünde karşılaşırsınız.
     if (!t.rival && G.t > .8) {
-      const all = G.npcs.filter((n) => n.state === "stand" && !n.elder && !n.dozer && n.alightAt !== G.seg && dist(n.x, n.z) > .45);
+      const all = G.npcs.filter((n) => n.state === "stand" && !n.elder && !n.dozer && !n.yoldas && !n.teh && n.alightAt !== G.seg && dist(n.x, n.z) > .45);
       const cand = all.sort((a, b) => dist(a.x, a.z) - dist(b.x, b.z))[0];
       if (cand) { t.rival = true; cand.rival = true; cand.toSeat = t.seat; cand.rivalWait = true; }
     }
@@ -910,7 +967,7 @@ function updateWalk(h) {
   // Önü tıkalı kalırsa zorla geçer: yavaşlar, omuz atarak aradan sıyrılır, ittikleri kızar.
   // Tıkalı sayılması için durması gerekmez: sağa sola kayıp hedefe yaklaşamıyorsa da tıkalıdır.
   const gain = Math.max(dA - dist(aim), dT - dist(tgt));
-  if (gain > WALK_SPEED * h * .25) G.blockT = Math.max(0, G.blockT - h * 2);
+  if (gain > WALK_SPEED * G.mod.yuru * h * .25) G.blockT = Math.max(0, G.blockT - h * 2);
   else if (G.target) {
     G.blockT += h;
     if (G.blockT > SQUEEZE_AFTER && !G.squeeze) { G.squeeze = true; flash("MÜSAADE!", C.sign); buzz(20); }
@@ -924,12 +981,13 @@ function walkToward(aim, h) {
   const dx = aim[0] - G.pos[0], dz = aim[1] - G.pos[1], d = Math.max(1e-3, Math.hypot(dx, dz));
   const sq = G.squeeze, ux = dx / d, uz = dz / d, R = 2 * BODY_R * (!sq ? 1 : G.blockT > SQUEEZE_HARD_AFTER ? SQUEEZE_R_HARD : SQUEEZE_R);
   const m = Math.hypot(G.p[0], G.p[1]);
-  const s = Math.min(d, WALK_SPEED * (sq ? SQUEEZE_SPEED : 1) * (1 - .5 * Math.min(1, m * SHOW)) * h);
+  const s = Math.min(d, WALK_SPEED * G.mod.yuru * (sq ? SQUEEZE_SPEED : 1) * (1 - .5 * Math.min(1, m * SHOW)) * h);
   const pt = [G.pos[0] + ux * s, G.pos[1] + uz * s];
   if (sq) for (const n of solidNpcs()) {
     // Zorla geçerken değdiği herkesi kendinden uzağa iter (yürüyeni de); itilen sendeler ve kızar.
     const ox = n.x - pt[0], oz = n.z - pt[1], od = Math.hypot(ox, oz) || 1;
     if (od >= 2 * BODY_R) continue;
+    if (!(n.sikT <= G.t && G.t - n.sikT < 1)) { n.sikT = G.t; kanca("olay", "sikisma", { n }); } // yolcu başına en çok saniyede bir
     stepAside(n, ox / od, oz / od, h * 3);
     n.v[0] += ox / od * 2 * h; n.v[1] += oz / od * 2 * h;
     if (!n.bumped) bump(n, ux, uz); else anger(n);
@@ -978,7 +1036,7 @@ function updateDozer(dt) {
     if (G.sitT < 2.5) return;
     G.sitT = -6; // kimse bulunamazsa bir süre sonra yeniden dener
     if (pushStatic([...spot], BODY_R) || hitsPerson(spot, 2 * BODY_R + .02)) return;
-    const all = G.npcs.filter((n) => n.state === "stand" && !n.elder && !n.rival && !n.exitSide && n.alightAt !== G.seg);
+    const all = G.npcs.filter((n) => n.state === "stand" && !n.elder && !n.rival && !n.yoldas && !n.teh && !n.exitSide && n.alightAt !== G.seg);
     const n = all.sort((a, b) => Math.hypot(a.x - spot[0], a.z - spot[1]) - Math.hypot(b.x - spot[0], b.z - spot[1]))[0];
     if (!n) return;
     Object.assign(n, { goal: spot, state: "walk", dozer: true, stuck: 0 });
@@ -1016,24 +1074,29 @@ function bump(n, ux = 0, uz = 0) {
   n.bumped = true; G.bumps++; G.v[0] += ux * .7; G.v[1] += uz * .7; loseMult();
   { const dx = n.x - G.pos[0], dz = n.z - G.pos[1], d = Math.hypot(dx, dz) || 1; n.v[0] += dx / d * 1.2; n.v[1] += dz / d * 1.2; } // çarpılan sendeler
   flash("PARDON!", C.sign); tone(520, .07, "triangle", .12); tone(390, .1, "triangle", .1, .08); buzz(40);
+  kanca("olay", "carpma", { n });
   anger(n);
 }
 // Sendeleyeni tut: sert bir sarsıntıda yakınındaki bir yolcu sendeler, ayağının dibinde halka yanar.
 // Süre dolmadan ona dokunursan tutarsın: teşekkür eder, puan gelir. Tutmazsan kendini toplar, ceza yok.
 // Sayılar geçici: süre, sıklık, uzaklık ve puan aşağıda.
 const GRAB_GAP = .36, WOB_THANK = 1.35, WOB_T = 1.8, WOB_REACH = 1.9, WOB_GAP = 8, WOB_CHANCE = .75, WOB_SCORE = 50, WOB_MAX = .38;
+// Yolcuyu sendeletir: dir itildiği yön (x, z; uzunluğu önemsiz). Bir sendeleyen varken başlamaz, başlarsa true döner.
+function startWob(n, dir) {
+  if (G.wob || n.wob) return false;
+  const m = Math.hypot(dir[0], dir[1]) || 1;
+  n.wob = { t: 0, dir: [dir[0] / m, dir[1] / m], end: 0, ang: 0, a0: 0 }; G.wob = n;
+  say(n, "\u270B Tut!", "warn", WOB_T);
+  tone(700, .08, "triangle", .07); tone(880, .1, "triangle", .07, .09);
+  return true;
+}
 function updateWob(h) {
   if (!curSeg().test && G.state === "ride" && G.sitting < 0 && !G.wob && G.t > G.wobNext) {
     const e = G.events.find((e) => e.k !== "pot" && e !== G.finalBrake && !e.wobbed && G.t >= e.t + .15 && G.t < e.t + .5);
     if (e) {
       e.wobbed = true;
-      const c = G.npcs.filter((n) => n.state === "stand" && !n.elder && !n.dozer && !n.rival && !n.mad && n.z < G.pos[1] - .1 && Math.hypot(n.x - G.pos[0], n.z - G.pos[1]) < WOB_REACH);
-      if (c.length && G.rnd() < WOB_CHANCE) {
-        const n = c[Math.floor(G.rnd() * c.length)], m = Math.hypot(e.v[0], e.v[1]) || 1;
-        n.wob = { t: 0, dir: [e.v[0] / m, e.v[1] / m], end: 0, ang: 0, a0: 0 }; G.wob = n;
-        say(n, "\u270B Tut!", "warn", WOB_T);
-        tone(700, .08, "triangle", .07); tone(880, .1, "triangle", .07, .09);
-      }
+      const c = G.npcs.filter((n) => n.state === "stand" && !n.elder && !n.dozer && !n.rival && !n.mad && !n.yoldas && n.z < G.pos[1] - .1 && Math.hypot(n.x - G.pos[0], n.z - G.pos[1]) < WOB_REACH);
+      if (c.length && G.rnd() < WOB_CHANCE) startWob(c[Math.floor(G.rnd() * c.length)], e.v);
     }
   }
   if (G.lunge) {
@@ -1092,7 +1155,7 @@ const POKE = [["Efendim?", "Buyur?", "Selam!", "Tanışıyor muyuz?", "Hayırdı
 const POKE_ELDER = ["Evladım?", "Yer mi vereceksin?", "Sizin zamanınızda..."];
 const PHONE_SAY = ["Alo? ALO?!", "Metrobüsteyim! ME-TRO-BÜS!", "Duyamıyorum, çok kalabalık!", "Sen yemeği koy, geliyorum!", "Hayır, tutunmuyorum!", "Biri düştü galiba, kapatıyorum!"];
 const pickOf = (a) => a[Math.floor(Math.random() * a.length)];
-const idle = (n) => n.state === "stand" && !n.wob && !n.mad && !n.act && !n.rival && !n.dozer;
+const idle = (n) => n.state === "stand" && !n.wob && !n.mad && !n.act && !n.rival && !n.dozer && !n.yoldas && !n.teh;
 // Bir yolcunun gövdesine dokununca oyuncu el sallayıp seslenir; yolcu döner, cevap verir. Üsteleyince kızar.
 function poke(n) {
   n.pokes = (n.pokes || 0) + 1;
@@ -1148,20 +1211,32 @@ function anger(n) {
   const list = n.hits > 1 ? MAD_AGAIN : MAD_SAY;
   say(n, (n.hits > 1 ? "\u{1F4A2} " : "") + list[Math.floor(Math.random() * list.length)], "mad", MAD_T);
   tone(170, .16, "sawtooth", .06, .12); tone(140, .2, "sawtooth", .06, .28);
+  kanca("olay", "kizdi", { n });
 }
 
 function arrive() {
-  const line = curLine();
+  const line = curLine(), tanim = dertTanim(), hedefte = !!tanim && curSeg().to === tanim.hedef;
   finishTask();
-  const tasksOk = line.seg.every((s, i) => i < G.seg0 || i > G.seg || !s.task || G.results[i] === true); // yalnız bindiğin yollar sayılır
-  const stars = 1 + (tasksOk ? 1 : 0) + (!G.lineStumbled && !G.lineFalls ? 1 : 0);
-  G.starsByLine[G.line] = Math.max(G.starsByLine[G.line] || 0, stars);
-  G.lastStars = stars; G.state = "arrived";
-  const sc = Math.floor(G.score); G.newBest = sc > (best[G.line] || 0);
-  if (G.newBest) { best[G.line] = sc; try { localStorage.setItem(BEST_KEY, JSON.stringify(best)); } catch (e) {} }
+  kanca("olay", "indi", { durak: curSeg().to, hedef: hedefte });
+  let stars = 0;
+  if (!tanim) { // dertte yıldız, rekor ve hat sonucu yok; sonucu dert verir
+    const tasksOk = line.seg.every((s, i) => i < G.seg0 || i > G.seg || !segGorev(s) || G.results[i] === true); // yalnız bindiğin yollar sayılır
+    stars = 1 + (tasksOk ? 1 : 0) + (!G.lineStumbled && !G.lineFalls ? 1 : 0);
+    G.starsByLine[G.line] = Math.max(G.starsByLine[G.line] || 0, stars);
+    G.lastStars = stars;
+  }
+  G.state = "arrived";
+  if (!tanim) {
+    const sc = Math.floor(G.score); G.newBest = sc > (best[G.line] || 0);
+    if (G.newBest) { best[G.line] = sc; try { localStorage.setItem(BEST_KEY, JSON.stringify(best)); } catch (e) {} }
+  }
   setLed("İyi yolculuklar"); setTask();
   beep(660, .1); setTimeout(() => beep(990, .16), 120);
-  if (G.line >= 0 && servicesAt(curSeg().to).length) { flash(`İNDİN! ${"★".repeat(stars)}${"☆".repeat(3 - stars)}`, C.safe, 1600); return startPlatform(); }
+  if (tanim) {
+    if (G.ds.kacirdi) return dertGec({ kacirdi: true }); // hedefi kaçırmıştın: indiğin ilk durakta dert biter
+    if (hedefte) { flash("İNDİN!", C.safe, 1200); return dertVaris(); }
+  }
+  if (G.line >= 0 && servicesAt(curSeg().to).length) { flash(tanim ? "İNDİN!" : `İNDİN! ${"★".repeat(stars)}${"☆".repeat(3 - stars)}`, C.safe, 1600); return startPlatform(); }
   setTimeout(showArrived, 900);
 }
 
@@ -1170,6 +1245,8 @@ function arrive() {
 // Oyuncu peronda serbest yürür, istediği araca dokunup biner; bindiği aracın hattı başlar.
 const PLAT_X = BUS.halfW + .58, PLAT_WAIT_Z = 7.7, PLAT_SPEED = 3, PICK_TIME = 8;
 const PLAT_MIN_X = BUS.halfW + .4, PLAT_MAX_X = 4.2, PLAT_Z = 13, WAITER_R = .5;
+// Peron koşusu (dert varışı): çıkış işareti peronun ön ucunda, ortasında; bu kadar yaklaşınca yetişmiş sayılır.
+const KOS_X = (PLAT_MIN_X + PLAT_MAX_X) / 2, KOS_Z = -PLAT_Z + 1, KOS_R = .8;
 const svcOf = (pl) => pl.list[pl.svc % pl.list.length];
 const svcName = (pl) => `${svcOf(pl).code} ${lineEnd(svcOf(pl).line)}`;
 const awayFrom = (pt) => { for (const w of waiters) { const dx = pt[0] - w[0], dz = pt[1] - w[1], d = Math.hypot(dx, dz) || 1e-3; if (d < WAITER_R) { pt[0] += dx / d * (WAITER_R - d); pt[1] += dz / d * (WAITER_R - d); } } };
@@ -1189,6 +1266,7 @@ function leaveGhost() {
   for (const l of lights) l.removeFromParent();
   if (pl.ghost) scene.remove(pl.ghost);
   pl.ghost = g; pl.gz = 0; pl.gv = 0; scene.add(g);
+  if (pl.final) return; // peron koşusunda yeni araç gelmez, tabela değişmez
   // Kalkan araç kendi tabelasıyla gider; sıradaki araç öbür tabelayı takar.
   busSignCur = 1 - busSignCur; for (const m of busSigns) m.material = busSignMats[busSignCur].mat;
   pl.svc++; setBusSign(svcName(pl));
@@ -1201,7 +1279,7 @@ function updatePlatform(dt) {
   const aim = pl.path[0];
   pl.moving = !!aim;
   if (aim) {
-    const dx = aim[0] - pl.x, dz = aim[1] - pl.z, d = Math.hypot(dx, dz), stepLen = PLAT_SPEED * dt;
+    const dx = aim[0] - pl.x, dz = aim[1] - pl.z, d = Math.hypot(dx, dz), stepLen = PLAT_SPEED * G.mod.yuru * dt;
     pl.wantYaw = Math.atan2(-dx, -dz);
     if (d <= stepLen) { pl.x = aim[0]; pl.z = aim[1]; pl.path.shift(); }
     else { pl.x += dx / d * stepLen; pl.z += dz / d * stepLen; pl.wp += dt * 11; }
@@ -1214,9 +1292,12 @@ function updatePlatform(dt) {
   else if (pl.bus === "closing" && pl.t > .8) {
     // Araç kalkar. Gelen her araç kendi hattının yolcuları ve görevleriyle kurulur.
     leaveGhost();
-    startLine(svcOf(pl).line, svcOf(pl).seg); G.state = "platform"; flash("", C.text);
-    G.busZ = 60; pl.bus = "away"; pl.t = 0; pl.door = null;
-    setLed(`${svcName(pl)} · geliyor`);
+    if (pl.final) { G.busZ = 400; pl.bus = "gone"; pl.t = 0; pl.door = null; } // koşuda yenisi gelmez; asıl araç görüş dışına alınır
+    else {
+      startLine(svcOf(pl).line, svcOf(pl).seg); G.state = "platform"; flash("", C.text);
+      G.busZ = 60; pl.bus = "away"; pl.t = 0; pl.door = null;
+      setLed(`${svcName(pl)} · geliyor`);
+    }
   } else if (pl.bus === "away" && pl.t > 1.5) { pl.bus = "arriving"; pl.t = 0; }
   else if (pl.bus === "arriving") {
     const k = Math.min(1, pl.t / 4.5);
@@ -1227,13 +1308,27 @@ function updatePlatform(dt) {
     }
   } else if (pl.bus === "open") {
     // Kapı seçilmediyse araç beklemez: kapanır, kalkar, sıradaki gelir.
-    if (pl.door === null && pl.t > PICK_TIME) { pl.bus = "closing"; pl.t = 0; pl.open = false; doorSound(); setLed(`${svcName(pl)} kalkıyor`); }
+    if (pl.door === null && pl.t > PICK_TIME * G.mod.kapi) { pl.bus = "closing"; pl.t = 0; pl.open = false; doorSound(); setLed(`${svcName(pl)} kalkıyor`); }
     else if (pl.door !== null && !pl.path.length) boardBus();
   }
+  if (pl.final && platformKos(dt)) return;
+  if (G.state !== "platform") return; // boardBus G.pl'yi sıfırladı: peron kancası çalışmaz
+  kanca("peron", dt);
+}
+// Peron koşusu: süre akar, LED sayar; işarete yetişince ya da süre bitince dert biter. Biterse true döner.
+function platformKos(dt) {
+  const f = G.pl.final;
+  f.t -= dt;
+  const yazi = `${f.yazi} · ${Math.max(0, Math.ceil(f.t))} sn`;
+  if ($("led").textContent !== yazi) setLed(yazi, f.t < 3);
+  if (Math.hypot(G.pl.x - KOS_X, G.pl.z - KOS_Z) < KOS_R) { dertBitir({ yetisti: true, kalan: Math.max(0, f.t) }); return true; }
+  if (f.t <= 0) { dertBitir({ yetisti: false }); return true; }
+  return false;
 }
 function pickDoor(z) {
   const pl = G.pl;
-  if (!pl || pl.bus !== "open" || pl.x < BUS.halfW + .2) return false;
+  if (!pl || pl.bus !== "open" || pl.x < BUS.halfW + .2) return false; // koşuda araç hiç açılmaz: binilmez
+  if (engelVar("bin")) return false;
   pl.door = DOORS.reduce((a, b) => (Math.abs(b - z) < Math.abs(a - z) ? b : a));
   pl.path = [[PLAT_X, pl.door], [.85, pl.door]];
   setLed(`Sıradaki durak: ${curSeg().to}`); beep(700, .06);
@@ -1256,8 +1351,10 @@ function boardBus() {
   if (pl.ghost) scene.remove(pl.ghost);
   G.code = svcOf(pl).code;
   G.pl = null; G.busZ = 0; G.t = 0; G.state = "ride";
+  tehlikeKur(); if (G.snap) G.snap.npcs = clone(G.npcs); // oyuncunun gerçek biniş yerine göre; düşünce aynı tehlikelerle dönülür
   doorSound();
   flash(`Senin durağın: ${line.seg[line.seg.length - 1].to}`, C.sign, 1800);
+  kanca("olay", "bindi");
 }
 
 // Mekanik testi: 30 saniye düşmeden biterse yol tamamlanır. Deneme sayısı ve en uzun dayanma telefonda saklanır,
@@ -1316,6 +1413,7 @@ function fall() {
   if (curSeg().test) { G.testText = text; recordTest(false); }
   G.endText = text; G.endT = FALL_HOLD + G.knocked * .35;
   startReactions();
+  kanca("olay", "dusme");
 }
 // Düşünce ekran hemen kapanmaz: sahne bir süre izlenir. Ayaktakiler döner, güler, bir ikisi telefonla çeker.
 // Beklemek istemeyen ekrana dokunur, panel hemen gelir.
@@ -2059,7 +2157,7 @@ const tmpV = new THREE.Vector3();
 let crowdMeshes = [], seatedMeshes = [];
 function buildCrowd() {
   for (const c of crowdMeshes) disposePerson(c);
-  crowdMeshes = G.npcs.map((n) => { if (!n.look || !!n.look.elder !== !!n.elder) n.look = randomLook(n.elder); return makePerson(n.look, true, busG); });
+  crowdMeshes = G.npcs.map((n) => { if (!n.look || !!n.look.elder !== !!n.elder) n.look = randomLook(n.elder); const b = makePerson(n.look, true, busG); kanca("npcKur", n, b); return b; });
   G.crowdDirty = false;
 }
 // Koltuklarda oturanlar (oyuncu dahil değil)
@@ -2396,6 +2494,7 @@ function render(dt, now) {
       b.head.rotation.z = -sx * a * .5; b.head.position.y = J.headY - a * .05;
       b.hip.rotation.x += a * .15 + Math.sin(now * 1.5) * .03;
     } else { b.head.rotation.z = 0; b.head.position.y = J.headY; }
+    kanca("npcCiz", n, b, dt, now);
     if (STIL) {
       // Son geçiş: bütün pozlar yazıldıktan sonra, yüzden önce.
       softBody(b, dt, n.fallT !== undefined && G.state === "fallen" ? n.fallAng : -1, !!n.wob && !n.wob.end && G.state !== "fallen");
@@ -2483,6 +2582,7 @@ function render(dt, now) {
       pr.position.y = -.05 * e;
     }
   }
+  kanca("ciz", dt, now);
   if (STIL) {
     // Son geçiş: pozlardan sonra, yüzden önce. Oyuncunun başını hiçbir poz yazmaz; hedefi her karede sıfırdan başlar.
     player.head.rotation.x = 0; player.head.rotation.z = 0;
@@ -2516,12 +2616,20 @@ function render(dt, now) {
   }
 
   // Görevdeki boş koltuk parlar
-  const ks = G.task && G.task.type === "koltuk" && G.task.ok === null ? G.task.seat : -1;
+  const ks = G.task && G.task.type === "koltuk" && G.task.ok === null ? G.task.seat : G.isaretKoltuk >= 0 ? G.isaretKoltuk : -1; // dert de bir koltuğu işaretleyebilir
   seatGlow.visible = seatArrow.visible = seatBeam.visible = ks >= 0;
   if (ks >= 0) {
     seatGlow.position.set(SEATS[ks][0], .25, SEATS[ks][1]); seatGlow.material.opacity = .35 + .3 * (1 + Math.sin(now * 6)) / 2;
     seatArrow.position.set(SEATS[ks][0], 2.0 + Math.sin(now * 4) * .08, SEATS[ks][1]); seatArrow.rotation.y = now * 2;
     seatBeam.position.set(SEATS[ks][0], 1.1, SEATS[ks][1]); seatBeam.material.opacity = .22 + .14 * (1 + Math.sin(now * 6)) / 2;
+  }
+
+  // Peron koşusunun çıkış işareti
+  const kos = G.state === "platform" && G.pl && G.pl.final;
+  cikisIsareti.visible = !!kos;
+  if (kos) {
+    cikisIsareti.position.set(KOS_X, 0, KOS_Z);
+    cikisHalka.material.opacity = .55 + .35 * Math.sin(now * 6); cikisOk.rotation.y = now * 2.5; cikisOk.position.y = 1.9 + Math.sin(now * 4) * .1;
   }
 
   // Kapılar ve işaretler: yalnızca durağın yanındaki kapılar açılır
@@ -2641,7 +2749,10 @@ function frame(ts) {
     updateTilt(dt);
     acc += dt;
     while (acc >= FIXED) { step(FIXED); acc -= FIXED; }
+    // Dert saati: panel kapalıyken ve yol sürerken (araçta, peronda, düşmüşken) akar.
+    if (G.ds && overlay.hidden && (G.state === "ride" || G.state === "doors" || G.state === "platform" || G.state === "fallen")) G.ds.saat += dt;
   }
+  if (G.dert && now - dertCipT > .25) { dertCipT = now; dertCipGuncelle(); }
   render(G.paused ? 0 : dt, now);
   requestAnimationFrame(frame);
 }
@@ -2668,6 +2779,10 @@ function tapToWalk(cx, cy) {
   const r = canvas.getBoundingClientRect();
   if (G.state === "fallen") { if (G.fallT > .7) fallEnd(); return; }
   raycaster.setFromCamera({ x: (cx - r.left) / r.width * 2 - 1, y: -((cy - r.top) / r.height) * 2 + 1 }, camera);
+  if (G.state === "ride" || G.state === "doors" || G.state === "platform") { // dert ve ortak sistemler dokunuşu yutabilir
+    const zemin = raycaster.ray.intersectPlane(floorPlane, hitPoint) ? [hitPoint.x, hitPoint.z] : null;
+    if (kancaSor("dokun", cx, cy, zemin ? zemin[0] : null, zemin ? zemin[1] : null)) return;
+  }
   if (G.state === "platform") {
     // Aracın yan yüzüne dokunduysa o kapıya gider, kapılar açıksa biner; perona dokunduysa oraya yürür.
     if (raycaster.ray.intersectPlane(sidePlane, hitPoint) && hitPoint.y > 0 && hitPoint.y < 3) {
@@ -2759,12 +2874,1910 @@ function updateTilt(dt) {
   G.j = [G.j[0] + (x - G.j[0]) * e, G.j[1] + (y - G.j[1]) * e];
 }
 
+// ---------- Dert sistemi çekirdeği ----------
+// Dert: tek cümlelik bir senaryo (hat, başlangıç yolu, inilecek durak, isteğe bağlı süre). Kancalar ve tanım biçimi sözleşmede.
+// Yolcu nesnelerine yalnız JSON'a uygun alan yazılır; G.ds ve G.ortak geri yüklenmez (düşsen de leke kalır, süre akar).
+const DERT_KEY = "denge-dert-1", TEH_URL = new URLSearchParams(location.search).get("tehlike");
+const esc = (t) => String(t == null ? "" : t).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+let dertCipT = 0;
+function dertKayitOku() { try { return JSON.parse(localStorage.getItem(DERT_KEY)) || {}; } catch (e) { return {}; } }
+function dertKayit(id) { const k = dertKayitOku()[id] || {}; return { iyi: k.iyi | 0, kotu: k.kotu | 0 }; }
+function dertKayitIsle(id, iyi) {
+  const o = dertKayitOku(), k = dertKayit(id); if (iyi) k.iyi++; else k.kotu++; o[id] = k;
+  try { localStorage.setItem(DERT_KEY, JSON.stringify(o)); } catch (e) {}
+}
+
+// Yeni oyun, dert ya da menü: dert durumu ve ortak sistemler sıfırlanır, oyuncu varsayılan görünüme döner.
+function dertAyarla(id) {
+  G.dert = id; G.ds = id ? { saat: 0 } : null; G.ortak = {}; G.dertSon = null; G.isaretKoltuk = -1;
+  Object.assign(G.mod, { yuru: 1, kapi: 1, toparla: 1, kuvvet: 1 });
+  kanca("sifirla"); oyuncuGiy(null);
+  cikisIsareti.visible = false; dertCipGuncelle();
+}
+function dertBasla(id) {
+  const tanim = DERTLER[id]; if (!tanim) return;
+  begin(); dertAyarla(id);
+  if (G.state === "platform") G.state = "menu"; // peron durumundan baştan başlatma menüden başlıyormuş gibi temizlenir (G.pl, busZ)
+  startLine(tanim.basla.hat, QUICK && !QUICK_DERT ? 0 : tanim.basla.seg); // hat(true) kancası startLine içinden gelir
+  flash(tanim.giris, C.sign, 2600);
+  dertCipGuncelle();
+}
+function menuyeDon() {
+  dertAyarla(null);
+  startLine(0); G.state = "menu"; setLed("Hatta bin"); setTask(); flash("", C.text);
+  dertCipGuncelle(); showMenu();
+}
+function dertGec(bilgi, ms = 900) { // dertBitir'i kısa bir bekleyişle çağırır; arada dert değişirse vazgeçer
+  const id = G.dert;
+  setTimeout(() => { if (G.dert === id && G.state === "arrived" && !G.dertSon) dertBitir(bilgi); }, ms);
+}
+// Hedefte inildi: dert peron koşusu istiyorsa perona çıkılır, istemiyorsa doğrudan sonuç.
+function dertVaris() {
+  const tanim = dertTanim(), v = tanim.varis ? tanim.varis() : null;
+  if (v && v.kos) { startPlatform(); G.pl.path.length = 1; G.pl.final = { t: v.kos.sure, yazi: v.kos.yazi }; } // araçtan inince yalnız kapı hizasına yürür; işarete oyuncu dokunarak koşar
+  else dertGec({});
+}
+function dertBitir(bilgi = {}) {
+  const tanim = dertTanim(); if (!tanim || G.dertSon) return;
+  const r = tanim.sonuc({ kacirdi: !!(G.ds && G.ds.kacirdi), saat: G.ds ? G.ds.saat : 0, ...bilgi });
+  G.state = "arrived"; G.target = null; G.dertSon = r;
+  dertKayitIsle(G.dert, !!r.iyi);
+  setLed("İyi yolculuklar"); setTask(); dertCipGuncelle();
+  if (r.iyi) { beep(660, .1); setTimeout(() => beep(990, .16), 120); } else tone(160, .3, "sawtooth", .08);
+  showDert();
+}
+function showDert() {
+  const r = G.dertSon, k = dertKayit(G.dert);
+  show(`<h1>${esc(r.baslik)}</h1>
+    <p>${esc(r.yazi)}</p>
+    <ul>${(r.satirlar || []).map(([ok, t]) => `<li>${ok ? "★" : "☆"} ${esc(t)}</li>`).join("")}</ul>
+    <p class="small">İyi bitiş ${k.iyi} · kötü bitiş ${k.kotu}</p>
+    <button class="primary" id="again" type="button">Tekrar dene</button>
+    <button id="other" type="button">Başka dert</button>`);
+  $("again").onclick = () => dertBasla(G.dert);
+  $("other").onclick = menuyeDon;
+}
+// Çip: ad · durum · kalan süre. Süre geçince kırmızı ve +d:ss.
+const dertCip = $("dert");
+const dsn = (k) => `${Math.floor(k / 60)}:${String(k % 60).padStart(2, "0")}`;
+function dertCipGuncelle() {
+  const d = dertTanim();
+  dertCip.hidden = !d || G.state === "menu"; if (dertCip.hidden) return;
+  let y = d.ad, gec = false;
+  const dur = d.durum ? d.durum() : ""; if (dur) y += ` · ${dur}`;
+  if (d.sure) { const t = d.sure - G.ds.saat; gec = t < 0; y += gec ? ` · +${dsn(Math.ceil(-t))}` : ` · kalan ${dsn(Math.ceil(t))}`; }
+  if (dertCip.textContent !== y) dertCip.textContent = y;
+  dertCip.classList.toggle("gec", gec);
+}
+
+// Oyuncunun görünümünü yamayla yeniden kurar (null: varsayılan). `player` nesnesinin kimliği korunur: bardak, yüz, yumuşak beden durumu
+// ve kollara takılı her şey yerinde kalır; yalnız her eklemin ilk çocuğu olan gövde parçalarının geometrisi (ve eklem konumları) yenilenir.
+function oyuncuGiy(yama) {
+  const eski = player.look;
+  if (!yama && eski === PLAYER_LOOK) return;
+  const L = yama ? { ...PLAYER_LOOK, ...yama } : PLAYER_LOOK, g = personGeo(L), p = player;
+  const takas = (grp, geo) => { const m = grp.children[0]; if (m && m.isMesh) m.geometry = geo; };
+  p.legs.forEach((l, i) => { takas(l, g.legU); takas(p.knees[i], g.legL); l.position.x = (i ? 1 : -1) * J.legX * g.w; });
+  takas(p.hip, g.hip); takas(p.head, g.head);
+  p.arms.forEach((a, i) => { takas(a, g.armU[i]); takas(p.elbows[i], g.armL[i]); a.position.x = (i ? 1 : -1) * (g.sh * g.w * J.tsx + J.armX); });
+  p.body.scale.setScalar(L.h); p.look = L;
+  if (p.face) p.face.position.z = L.hair === "scarf" ? -.018 : 0;
+  if (eski !== PLAYER_LOOK) { // önceki yamanın geometrisi bırakılır
+    const o = geoCache.get(eski);
+    if (o) { for (const x of [o.hip, o.head, o.legU, o.legL, ...o.armU, ...o.armL]) x.dispose(); geoCache.delete(eski); }
+  }
+  kanca("oyuncuKur");
+}
+
+// Tehlikeler: `teh` alanı olan modüller, olasılığa göre ayakta duran sıradan yolculara `n.teh = id` yazılır.
+// Kesin kurulanlar: G.ortak.tehIste (dertler), ?tehlike=id,id ya da ?tehlike=hepsi.
+function tehlikeIste(id) { const l = G.ortak.tehIste || (G.ortak.tehIste = []); if (!l.includes(id)) l.push(id); }
+function tehlikeKur() {
+  if (TEST !== null) return;
+  const url = (TEH_URL || "").split(",").filter(Boolean), iste = G.ortak.tehIste || [];
+  for (const m of MODS) {
+    if (!m.teh) continue;
+    const kesin = url.includes("hepsi") || url.includes(m.id) || iste.includes(m.id);
+    if (!kesin && !(G.rnd() < m.teh.olasilik)) continue;
+    const uygun = G.npcs.filter((n) => n.state === "stand" && !n.elder && !n.teh && !n.yoldas && !n.rival && !n.dozer && !n.exitSide && n.alightAt !== G.seg
+      && Math.hypot(n.x - G.pos[0], n.z - G.pos[1]) >= 1.2);
+    if (!uygun.length) continue;
+    const [a, b] = m.teh.adet, adet = a + Math.floor(G.rnd() * (b - a + 1));
+    const ilk = uygun[Math.floor(G.rnd() * uygun.length)]; ilk.teh = m.id;
+    uygun.filter((n) => n !== ilk).sort((p, q) => Math.hypot(p.x - ilk.x, p.z - ilk.z) - Math.hypot(q.x - ilk.x, q.z - ilk.z))
+      .slice(0, adet - 1).forEach((n) => { n.teh = m.id; });
+  }
+}
+
+// Peron koşusunun çıkış işareti: zeminde halka, üstünde dönen ok. Bir kez yaratılır, yalnız koşuda görünür.
+const cikisIsareti = new THREE.Group();
+const cikisHalka = new THREE.Mesh(new THREE.RingGeometry(.5, .72, 32), new THREE.MeshBasicMaterial({ color: 0x2fb463, transparent: true, side: THREE.DoubleSide }));
+cikisHalka.rotation.x = -Math.PI / 2; cikisHalka.position.y = .03;
+const cikisOk = new THREE.Mesh(new THREE.ConeGeometry(.22, .5, 4), new THREE.MeshBasicMaterial({ color: 0x2fb463 }));
+cikisOk.rotation.x = Math.PI; // ucu aşağı
+cikisIsareti.add(cikisHalka, cikisOk); cikisIsareti.visible = false; scene.add(cikisIsareti);
+
+// ---------- Dertler, ortak sistemler, tehlikeler ----------
+// >>> BÖLGE ortak-ust
+// Üst baş: leke, kırışıklık, dağınık saç, ıslaklık. Durum G.ortak.ust'ta; görseller karakterin üstünde (gösterge yok).
+const UST_TIPLER = ["leke", "kirisik", "sac", "islak"];
+const UST_OTO = { sikisma: { kirisik: .06 }, carpma: { kirisik: .04 }, tokezle: { sac: .25 }, dusme: { kirisik: .3, sac: .4 } }; // ustOto açıkken olay başına artış
+const UST_PUAN = { leke: .4, kirisik: .3, sac: .2, islak: .1 };
+// Gövde yüzeyi personGeo'daki lathe profillerinden ([y, yarıçap]) ve z ölçeklerinden (pantolon .7, üst .62, mont .66) kurulur; ?stil bel ve kadın/erkek farkı dahil.
+const UST_PANT = [[-.095, .001], [-.08, .13], [-.035, .172], [.04, .186], [.12, .178]];
+const ustBel = (f) => STIL ? (f ? .18 : .196) : f ? .152 : .172, ustOmuz = (f) => f ? .17 : .188;
+const ustUstP = (f) => [[.08, ustBel(f)], [.2, ustBel(f)], [.34, f ? .19 : .195], [.45, f ? .198 : .208], [.52, ustOmuz(f) + .005], [.59, ustOmuz(f) - .012], [.64, .15], [.662, .06]];
+const ustMontP = (f) => [[-.14, .196], [0, .198], [.2, ustBel(f) + .028], [.42, (f ? .2 : .21) + .014], [.52, ustOmuz(f) + .02], [.6, ustOmuz(f) + .004], [.648, .16]];
+const UST_PAY = .004, UST_ISLAK_PAY = .012; // leke/ıslak katman yüzeyin ne kadar dışında dursun
+// Leke: [y, açı (0 = tam sırt, +z), boyut]; sırayla görünür. Sırt ve yanlar öncelikli.
+const UST_LEKE = [[.38, .3, .05], [.25, -.55, .04], [.5, -.25, .045], [.12, .95, .04], [.42, -1.25, .05], [.3, 1.3, .04]];
+// Kırışıklık: [y, açı, eğim, boy]
+const UST_KIRIS = [[.42, .25, .5, .1], [.3, -.4, -.45, .09], [.5, -.1, .15, .11], [.16, .45, .6, .08], [.36, 1.0, -.3, .08]];
+// Saç tutamı: [kafatası üstündeki yön, tutamın yönü]
+const UST_SAC = [[[0, 1, .15], [.15, 1, .3]], [[.55, .75, .35], [1, .55, .2]], [[-.6, .7, .4], [-1, .5, .3]], [[0, .35, .93], [.1, .3, 1]]];
+const UST_KAFA = [.095, .13, .115]; // kafa yarıçapları (kafatası .08/.112/.098 + saç kabuğu payı)
+const UST_ISLAK_A = .12, UST_ISLAK_B = .3;   // ıslak katman saydamlığı: A + B * islak
+const UST_ALT = [[.001, -.1], [.14, -.09], [.19, -.04], [.2, .04], [.19, .1]];   // ıslak katman, pantolon kısmı (z ölçeği .72)
+
+const ustSph = new THREE.SphereGeometry(1, 8, 6), ustKut = new THREE.BoxGeometry(1, 1, 1);
+const ustMLeke = new THREE.MeshLambertMaterial({ color: 0x5a3a1e }), ustMKir = new THREE.MeshLambertMaterial({ color: 0x1f1a17, transparent: true, opacity: .55 });
+const ustMSac = new THREE.MeshLambertMaterial({ color: PLAYER_LOOK.hairC }), ustMIslak = new THREE.MeshLambertMaterial({ color: 0x14202e, transparent: true, opacity: UST_ISLAK_A, depthWrite: false });
+const ustLat = (p) => new THREE.LatheGeometry(p.map(([r, y]) => new THREE.Vector2(r, y)), 20);
+const ustPr = (p, y) => { // [y, r] dizisinde y'deki yarıçap; aralık dışında 0
+  if (y < p[0][0] || y > p[p.length - 1][0]) return 0;
+  for (let i = 1; i < p.length; i++) if (y <= p[i][0]) return p[i - 1][1] + (p[i][1] - p[i - 1][1]) * (y - p[i - 1][0]) / (p[i][0] - p[i - 1][0]);
+  return 0;
+};
+const ustYuz = (y, f, mont) => { // y'deki [z, x] yarıçapı: pantolon, üst ve (varsa) mont yüzeyinin en dışı
+  const pa = ustPr(UST_PANT, y), us = ustPr(ustUstP(f), y), mo = mont ? ustPr(ustMontP(f), y) : 0;
+  return [Math.max(pa * .7, us * .62, mo * .66) + UST_PAY, Math.max(pa, us, mo) + UST_PAY];
+};
+const ustHip = new THREE.Group(), ustBas = new THREE.Group(); // kalçaya (gövde) ve kafaya takılan gruplar; ölçekleri oyuncuKur'da yazılır
+const ustLeke = UST_LEKE.map(([y, a, s]) => {
+  const m = new THREE.Mesh(ustSph, ustMLeke);
+  m.rotation.y = a; m.scale.set(s, s * .85, .012); m.visible = false; ustHip.add(m); return m;
+});
+const ustKiris = UST_KIRIS.map(([y, a, e, b]) => {
+  const m = new THREE.Mesh(ustKut, ustMKir);
+  m.rotation.set(0, a, e); m.scale.set(b, .007, .012); m.visible = false; ustHip.add(m); return m;
+});
+const ustSac = UST_SAC.map(([p, t]) => {
+  const m = new THREE.Mesh(ustSph, ustMSac), pv = new THREE.Vector3(...p).normalize(), tv = new THREE.Vector3(...t).normalize();
+  m.position.set(pv.x * UST_KAFA[0], pv.y * UST_KAFA[1], pv.z * UST_KAFA[2]).addScaledVector(tv, .03);
+  m.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), tv); m.scale.set(.013, .045, .013); m.visible = false; ustBas.add(m); return m;
+});
+const ustIslakA = new THREE.Mesh(ustLat(UST_ALT), ustMIslak), ustIslakU = new THREE.Mesh(ustLat([[.2, .07], [.2, .2]]), ustMIslak);
+ustIslakA.scale.set(1, 1, .72); ustIslakA.visible = ustIslakU.visible = false; ustHip.add(ustIslakA, ustIslakU);
+let ustAnahtar = -1; // görünürlük önbelleği (sayı): durum değişmedikçe mesh'lere dokunulmaz; -1 gizli, -2 yeniden hesapla
+let ustYuzAnh = -1; // yüzey düzeninin anahtarı: mont var mı, kadın mı
+
+// Leke, kırışıklık ve ıslak gövde katmanını geçerli görünümün yüzeyine oturtur (mont varken mont lathe'inin dışına). Yalnız görünüm değişince çalışır.
+function ustYerles(L) {
+  const f = !!L.f, mont = !!L.coat, ank = (mont ? 1 : 0) + (f ? 2 : 0);
+  if (ank === ustYuzAnh) return; ustYuzAnh = ank;
+  UST_LEKE.forEach(([y, a], i) => { const [rz, rx] = ustYuz(y, f, mont); ustLeke[i].position.set(Math.sin(a) * rx, y, Math.cos(a) * rz); });
+  UST_KIRIS.forEach(([y, a], i) => { const [rz, rx] = ustYuz(y, f, mont); ustKiris[i].position.set(Math.sin(a) * rx, y, Math.cos(a) * rz + .004); });
+  // ıslak gövde: mont varken mont profili, yoksa üst profili; ikisi de yüzeyin biraz dışında
+  const pr = mont ? ustMontP(f) : [[.07, ustBel(f)], ...ustUstP(f).slice(0, 7)], son = pr[pr.length - 1][0], z = mont ? .68 : .64;
+  const lp = pr.map(([y, r]) => [r + UST_ISLAK_PAY, y]); lp.push([.07, son + .02], [.001, son + .024]);
+  ustIslakU.geometry.dispose(); ustIslakU.geometry = ustLat(lp); ustIslakU.scale.set(1, 1, z);
+}
+ustYerles(PLAYER_LOOK);
+
+// Gruplar oyuncuya (ilk kullanımda) takılır ve ölçekleri geçerli görünüme uydurulur: hip'in yerel ölçüsü gövde geometrisiyle aynı (w, ?stil torso).
+function ustTak() {
+  if (ustHip.parent !== player.hip) player.hip.add(ustHip);
+  if (ustBas.parent !== player.head) player.head.add(ustBas);
+  const t = J.torso || [1, 1, 1];
+  ustHip.scale.set(player.look.w * t[0], t[1], t[2]); ustBas.position.y = J.headPiv;
+  ustMSac.color.set(player.look.hairC); ustYerles(player.look); ustAnahtar = -2;
+}
+function ustGizle() { ustHip.visible = ustBas.visible = false; ustAnahtar = -1; }
+const ustKad = (v, n) => Math.min(n, Math.max(0, Math.ceil(v * n - .001))); // 0..1 seviyeden kaç parça görünür
+
+function ustKir(tip, miktar) {
+  const u = G.ortak && G.ortak.ust; if (!u || !UST_TIPLER.includes(tip)) return;
+  u[tip] = Math.min(1, Math.max(0, u[tip] + miktar));
+  kanca("olay", "ust", { tip, miktar });
+}
+function ustOto(acik) { const u = G.ortak && G.ortak.ust; if (u) u.oto = !!acik; }
+function ustPuan() {
+  const u = G.ortak && G.ortak.ust; if (!u) return 1;
+  let p = 1; for (const k of UST_TIPLER) p -= u[k] * UST_PUAN[k];
+  return Math.min(1, Math.max(0, p));
+}
+
+MODS.push({
+  id: "ortak-ust",
+  sifirla() { ustGizle(); },
+  hat(ilk) { if (ilk || !G.ortak.ust) G.ortak.ust = { leke: 0, kirisik: 0, sac: 0, islak: 0, oto: false }; }, // aktarmada (ilk false) durum korunur
+  oyuncuKur() { ustTak(); },
+  olay(tip) {
+    const u = G.ortak.ust, a = UST_OTO[tip]; // kendi "ust" olayımız tabloda yok: döngü olmaz
+    if (!u || !u.oto || !a) return;
+    for (const k in a) ustKir(k, a[k]);
+  },
+  ciz() {
+    const u = G.ortak.ust;
+    if (!u) { if (ustAnahtar !== -1) ustGizle(); return; }
+    if (ustHip.parent !== player.hip || ustBas.parent !== player.head) ustTak();
+    const nl = ustKad(u.leke, ustLeke.length), nk = ustKad(u.kirisik, ustKiris.length), ns = ustKad(u.sac, ustSac.length), isl = u.islak > .02;
+    const ank = nl + nk * 8 + ns * 64 + (isl ? 512 : 0);
+    if (ank !== ustAnahtar) {
+      ustAnahtar = ank; ustHip.visible = true; ustBas.visible = ns > 0;
+      ustLeke.forEach((m, i) => { m.visible = i < nl; }); ustKiris.forEach((m, i) => { m.visible = i < nk; }); ustSac.forEach((m, i) => { m.visible = i < ns; });
+      ustIslakA.visible = ustIslakU.visible = isl;
+    }
+    if (isl) ustMIslak.opacity = UST_ISLAK_A + UST_ISLAK_B * u.islak;
+  },
+});
+// <<< BÖLGE ortak-ust
+
+// >>> BÖLGE ortak-esya
+// Elde taşınan eşya (dosya, kimlik, hediye): sol elde durur, tökezleyince ve bazen çarpınca düşer, yerden alınır.
+// Durum G.ortak.esya düz veridir; mesh'ler bu bölgede bir kez yaratılır. Sayılar geçici.
+const ESYA_AD = { dosya: "Dosya", kimlik: "Kimlik", hediye: "Hediye" };
+const ESYA_YAKIN = [.5, .9];   // düşme uzaklığı aralığı (m)
+const ESYA_CARPMA = .4;        // çarpınca düşme olasılığı
+const ESYA_UCUS = .45;         // düşme yayının süresi (sn)
+const ESYA_ALMA_R = .45;       // oyuncu bu kadar yaklaşınca alır
+const ESYA_DOKUN_R = .5;       // zemin dokunuşu eşyaya bu kadar yakınsa yürünür
+const ESYA_EGIL = .4;          // alırken eğilme süresi (sn)
+const ESYA_ITME_R = .3, ESYA_ITME = .4, ESYA_ITME_ARA = 1.5; // yürüyen yolcu: değme uzaklığı, itme mesafesi, eşya başına en az aralık (sn)
+const ESYA_ZEMIN_R = .12;      // eşyanın yerdeki yarıçapı (duvara ve koltuğa girmesin)
+const ESYA_HALKA = 0xffd23a;
+
+const esyaGor = { ucT: 1, bx: 0, bz: 0, gx: 0, gz: 0, egilT: 0 }; // yalnız görsel: yay, yerdeki gösterim konumu, eğilme
+
+function esyaModel() { // tüm tipler tek grupta, yalnız seçilen görünür; elde dikey, yerde `yer` düzler
+  const g = {}, kutu = (w, h, d, c, y = 0, z = 0, x = 0) => { const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), M(c)); m.position.set(x, y, z); return m; };
+  g.dosya = new THREE.Group(); g.dosya.add(kutu(.3, .38, .035, 0x2f6fd0), kutu(.26, .04, .04, 0x1f4f9a, .13), kutu(.27, .33, .012, 0xf3f1e8, 0, .02));
+  g.kimlik = new THREE.Group(); g.kimlik.add(kutu(.17, .11, .012, 0xf5f5f0), kutu(.17, .025, .014, 0xd23c3c, .042), kutu(.04, .05, .015, 0x6a7a8a, -.05, 0, -.045));
+  g.hediye = new THREE.Group(); g.hediye.add(kutu(.22, .17, .22, 0xd23c5a), kutu(.035, .172, .225, 0xf2c14e), kutu(.225, .172, .035, 0xf2c14e));
+  { const fiyonk = new THREE.Mesh(new THREE.SphereGeometry(.05, 8, 6), M(0xf2c14e)); fiyonk.position.y = .12; g.hediye.add(fiyonk); }
+  for (const k in g) g[k].visible = false;
+  return g;
+}
+const esyaTutM = esyaModel(), esyaYerM = esyaModel();
+const esyaTut = new THREE.Group(); // el: sol dirseğe takılır
+for (const k in esyaTutM) esyaTut.add(esyaTutM[k]);
+esyaTut.position.y = J.cupY - J.elbowY + .02; esyaTut.scale.setScalar(J.cupS / 1.6); esyaTut.visible = false;
+const esyaYer = new THREE.Group(), esyaYerIc = new THREE.Group(); // yer: araç grubuna takılı, araçla birlikte durur
+for (const k in esyaYerM) { esyaYerM[k].position.y = k === "hediye" ? .09 : .02; if (k !== "hediye") esyaYerM[k].rotation.x = -Math.PI / 2; esyaYerIc.add(esyaYerM[k]); }
+const esyaHalka = new THREE.Mesh(new THREE.RingGeometry(.28, .38, 24), new THREE.MeshBasicMaterial({ color: ESYA_HALKA, transparent: true, side: THREE.DoubleSide, depthWrite: false }));
+esyaHalka.rotation.x = -Math.PI / 2; esyaHalka.position.y = .03;
+esyaYer.add(esyaYerIc, esyaHalka); esyaYer.visible = false; busG.add(esyaYer);
+function esyaTakkil() { if (esyaTut.parent !== player.elbows[0]) player.elbows[0].add(esyaTut); } // oyuncuKur sonrası da güvenli
+
+function esyaVer(tip, ad) {
+  if (!ESYA_AD[tip]) tip = "dosya";
+  G.ortak.esya = { tip, ad: ad || ESYA_AD[tip], elde: true, x: G.pos[0], z: G.pos[1], t: 0 };
+  esyaGor.ucT = 1; esyaGor.egilT = 0;
+}
+function esyaYok() { G.ortak.esya = null; esyaGor.ucT = 1; esyaGor.egilT = 0; }
+function esyaVar() { return !!(G.ortak && G.ortak.esya); }
+function esyaElde() { return !!(G.ortak && G.ortak.esya && G.ortak.esya.elde); }
+
+// Eşya elden yere: oyuncunun yakınında duvara ve koltuğa girmeyen bir noktaya.
+function esyaDus() {
+  const e = G.ortak.esya; if (!e || !e.elde || G.pl) return;
+  const b = G.sitting >= 0 ? seatFront(G.sitting) : G.pos;
+  let pt = null;
+  for (let i = 0; i < 30 && !pt; i++) {
+    const a = Math.random() * Math.PI * 2, r = ESYA_YAKIN[0] + Math.random() * (ESYA_YAKIN[1] - ESYA_YAKIN[0]), q = [b[0] + Math.cos(a) * r, b[1] + Math.sin(a) * r];
+    if (!pushStatic([q[0], q[1]], ESYA_ZEMIN_R)) pt = q;
+  }
+  if (!pt) { pt = [b[0], b[1]]; pushStatic(pt, ESYA_ZEMIN_R); }
+  e.elde = false; e.x = pt[0]; e.z = pt[1]; e.t = 0; e.itT = -9;
+  Object.assign(esyaGor, { ucT: 0, bx: G.pos[0], bz: G.pos[1], gx: G.pos[0], gz: G.pos[1], egilT: 0 });
+  flash(`${e.ad} düştü!`, C.danger); tone(240, .09, "square", .08); tone(160, .12, "square", .06, .08);
+  kanca("olay", "esya-dustu");
+}
+
+MODS.push({
+  id: "esya",
+  sifirla() { esyaGor.ucT = 1; esyaGor.egilT = 0; esyaTut.visible = esyaYer.visible = false; },
+  oyuncuKur() { esyaTakkil(); },
+  hat(ilk) { // aktarmada giden araç hayalet olarak kopyalandı (yerdeki eşya onunla gitti); yeni araçta yerdeki eşya kalmaz
+    if (!ilk && G.ortak && G.ortak.esya && !G.ortak.esya.elde) esyaYok();
+  },
+  olay(tip) {
+    if (tip === "tokezle") esyaDus();
+    else if (tip === "carpma" && Math.random() < ESYA_CARPMA) esyaDus();
+  },
+  adim(dt) {
+    const e = G.ortak.esya; if (!e) return;
+    if (e.elde) { e.x = G.pos[0]; e.z = G.pos[1]; return; }
+    e.t += dt;
+    if (G.pl || esyaGor.ucT < 1) return; // peronda eşya araçla birlikte durur; yay bitmeden itilmez ya da alınmaz
+    // Yürüyen yolcu eşyaya değerse yürüdüğü yöne iter.
+    if (e.t - (e.itT ?? -9) >= ESYA_ITME_ARA) for (const n of G.npcs) {
+      if (n.state !== "walk" || !n.goal || Math.hypot(n.x - e.x, n.z - e.z) > ESYA_ITME_R) continue;
+      const ux = n.goal[0] - n.x, uz = n.goal[1] - n.z, d = Math.hypot(ux, uz);
+      if (d < 1e-3) continue;
+      const pt = [e.x + ux / d * ESYA_ITME, e.z + uz / d * ESYA_ITME]; pushStatic(pt, ESYA_ZEMIN_R);
+      e.x = pt[0]; e.z = pt[1]; e.itT = e.t; say(n, "Pardon!"); break;
+    }
+    // Oyuncu yaklaşınca alır.
+    if (G.stumble <= 0 && G.sitting < 0 && Math.hypot(G.pos[0] - e.x, G.pos[1] - e.z) < ESYA_ALMA_R) {
+      e.elde = true; e.t = 0; esyaGor.egilT = ESYA_EGIL;
+      kanca("olay", "esya-alindi");
+    }
+  },
+  dokun(cx, cy, x, z) {
+    const e = G.ortak.esya;
+    if (!e || e.elde || G.pl || x === null || (G.state !== "ride" && G.state !== "doors")) return false;
+    if (Math.hypot(x - e.x, z - e.z) >= ESYA_DOKUN_R) return false;
+    // Çekirdeğin yolcu dokunuşları (sendeleyeni yakalama, yolcuya seslenme) eşyanın yakınında yutulmasın.
+    if (G.state === "ride") {
+      if (G.wob && !G.wob.wob.end && tapOnNpc(G.wob, cx, cy)) return false;
+      if (G.sitting < 0 && !curSeg().test && G.npcs.some((n) => n.state === "stand" && !n.wob && n.fade > .6 && Math.hypot(n.x - G.pos[0], n.z - G.pos[1]) < 2.4 && tapOnNpc(n, cx, cy, true))) return false;
+    }
+    setWalkTarget(e.x, e.z); return true;
+  },
+  ciz(dt, now) {
+    const e = G.ortak.esya, g = esyaGor;
+    esyaTakkil();
+    if (!e) { esyaTut.visible = esyaYer.visible = false; return; }
+    for (const k in esyaTutM) { esyaTutM[k].visible = e.tip === k; esyaYerM[k].visible = e.tip === k; }
+    if (g.egilT > 0) g.egilT = Math.max(0, g.egilT - dt);
+    const eg = g.egilT > 0 ? Math.sin(Math.PI * (1 - g.egilT / ESYA_EGIL)) : 0; // 0 → 1 → 0
+    const yarim = g.egilT <= ESYA_EGIL * .5; // eğilmenin ikinci yarısında eşya yerden ele geçer
+    esyaTut.visible = e.elde && yarim;
+    if (e.elde) { // sol kol önde tutar; eşya kolun açısına göre dik kalır
+      const a = player.arms[0], el = player.elbows[0], hip = player.hip;
+      hip.rotation.x -= .5 * eg;
+      a.rotation.set(.75 + .6 * eg, 0, .3); el.rotation.x = .55;
+      // ?stil: softBody kolu ciz'den sonra yayla gecikmiş açıya geri yazar; dik tutma için yayın şimdiki değeri kullanılır
+      const S = STIL && player.soft && player.soft.init ? player.soft.x : null, ax = S ? S[2] : a.rotation.x, az = S ? S[3] : a.rotation.z, ex = S ? S[6] : el.rotation.x;
+      esyaTut.rotation.set(-(ax + ex + hip.rotation.x), 0, -(az + hip.rotation.z));
+    }
+    const yerde = !e.elde || !yarim; // alınırken ilk yarıda eşya hâlâ yerde görünür; peronda da araçla birlikte durur
+    esyaYer.visible = yerde;
+    if (!yerde) return;
+    if (g.ucT < 1) { // kısa yay: dönerek düşer
+      g.ucT = Math.min(1, g.ucT + dt / ESYA_UCUS);
+      const k = g.ucT;
+      g.gx = g.bx + (e.x - g.bx) * k; g.gz = g.bz + (e.z - g.bz) * k;
+      esyaYer.position.set(g.gx, .9 * (1 - k * k) + Math.sin(Math.PI * k) * .3, g.gz); esyaYer.rotation.set(k < 1 ? k * 5 : 0, 0, k < 1 ? k * 2 : 0);
+      esyaHalka.visible = false;
+    } else {
+      if (!e.elde) { const f = Math.min(1, dt * 10); g.gx += (e.x - g.gx) * f; g.gz += (e.z - g.gz) * f; } // itilince kayar; alınırken yerinde kalır
+      esyaYer.position.set(g.gx, 0, g.gz); esyaYer.rotation.set(0, 0, 0);
+      esyaHalka.visible = !e.elde; esyaHalka.material.opacity = .3 + .5 * (1 + Math.sin(now * 7)) / 2;
+    }
+  },
+});
+// <<< BÖLGE ortak-esya
+
+// >>> BÖLGE ortak-yoldas
+// Yoldaş: oyuncuyla birlikte yolculuk eden kişi (babaanne, turist...). Araçta G.npcs içinde `yoldas: tip` alanlı bir yolcudur,
+// otururken seatOcc girdisi taşır; peronda kendi mesh'i vardır. Durum G.ortak.yoldas altında; yolcu nesnesine yalnız JSON'a uygun alan yazılır.
+const YD_TAKIP_ARA = .6, YD_TAKIP_UZAK = 1.1, YD_YERLES = .9, YD_TAKIP_YERLES = .8; // takip: bu aralıkla bakar, bu kadar uzaksa yürür; ilk yerleştirme .9, takipte .8 m çevresine dizilir
+const YD_INME_MESAFE = 1.7, YD_BINME_MESAFE = 2.5;                  // inerken ve binerken oyuncuya en çok bu kadar uzak olabilir
+const YD_KAPI_X = .75, YD_KAPI_AYAK = [.75, -.75, 1.05, -1.05];     // inme isteğinde kapının yanında durduğu yer (x: duvardan, z: kapıdan sapma)
+const YD_PERON_K = 2.3, YD_PERON_DUR = .9, YD_PERON_UZAK = 1.1;     // peron hızı = hiz * K; oyuncuya .9 m kala durur, 1,1 m'den uzaksa yürür
+const YD_KAPI_HIZ = 2.4;                                            // peronda araçtan kapıya yürürken en az bu hız (araç kalkmadan çıksın)
+const YD_YURU_FAZ = 5;                                              // peronda yürüme pozu hızı (metre başına faz)
+let ydMesh = null, ydMeshLook = null;                               // peron mesh'i (yoldaşın görünümüne göre bir kez kurulur)
+const ydKapi = (z) => DOORS.reduce((a, b) => (Math.abs(b - z) < Math.abs(a - z) ? b : a));
+// Oyuncunun yeri: oturuyorsa koltuğun önü (yoldaş orada toplanır).
+const ydMerkez = () => (G.sitting >= 0 ? seatFront(G.sitting) : G.pos);
+
+function yoldasVar() { return !!G.ortak.yoldas; }
+function yoldasNpc() { return G.npcs.find((n) => n.yoldas) || null; }
+function yoldasKoltuk() { return G.seatOcc.findIndex((o) => o && o !== "player" && !!o.yoldas); }
+function yoldasBekle(b) {
+  const y = G.ortak.yoldas; if (!y) return;
+  y.bekle = !!b;
+  const n = yoldasNpc();
+  if (y.bekle && n && n.state === "walk" && n.toSeat < 0) { n.state = "stand"; n.goal = null; } // koltuğa gitmiyorsa olduğu yerde durur
+}
+// Oyuncuya uzaklık; otururken koltuğa uzaklık; yoldaş yoksa 0.
+function yoldasUzak() {
+  const y = G.ortak.yoldas; if (!y) return 0;
+  if (y.peron) return G.pl ? Math.hypot(y.px - G.pl.x, y.pz - G.pl.z) : 0;
+  const o = G.sitting >= 0 ? SEATS[G.sitting] : G.pos, k = yoldasKoltuk();
+  if (k >= 0) return Math.hypot(SEATS[k][0] - o[0], SEATS[k][1] - o[1]);
+  const n = yoldasNpc();
+  return n ? Math.hypot(n.x - o[0], n.z - o[1]) : 0;
+}
+// Merkez çevresinde boş yer; bulunamazsa merkezin yanına itilmiş bir nokta.
+function ydYer(cx, cz, skip, rad = YD_YERLES) {
+  const s = findSpot(cx, cz, rad, skip) || findSpot(cx, cz, 1.6, skip) || findSpot(0, 0, 1, skip, 8.5);
+  if (s) return s;
+  const p = [cx + .7, cz]; pushStatic(p, BODY_R); return p;
+}
+function ydEkle(x, z) {
+  const y = G.ortak.yoldas;
+  const n = npc(x, z, { look: y.look, elder: !!y.elder, yoldas: y.tip, speed: y.hiz });
+  G.npcs.push(n); G.crowdDirty = true;
+  return n;
+}
+// Yoldaşı oyuncunun yanına yolcu olarak ekler.
+function ydYanina() { const o = ydMerkez(), s = ydYer(o[0], o[1], null); return ydEkle(s[0], s[1]); }
+function yoldasVer({ tip, ad, elder = false, hiz = .8, look = null }) {
+  const eski = yoldasNpc(), k = yoldasKoltuk();
+  if (eski) G.npcs = G.npcs.filter((n) => n !== eski);
+  if (k >= 0) { G.seatOcc[k] = null; G.seatsDirty = true; }
+  const el = !!(elder || (look && look.elder)); // buildCrowd, yolcunun elder'ı ile görünümünün elder'ı uyuşmazsa görünümü yeniler
+  const L = look ? (!!look.elder === el ? look : { ...look, elder: el }) : randomLook(el);
+  G.ortak.yoldas = { tip, ad, elder: el, hiz, look: L, peron: false, bekle: false, takipT: 0 };
+  ydYanina();
+}
+// i. koltuğun önüne yürür, boşsa oturur (oturtma çekirdeğin npcArrived'ında).
+function yoldasOtur(i) {
+  const y = G.ortak.yoldas, n = yoldasNpc();
+  if (!y || !n || !(i >= 0 && i < SEATS.length) || G.seatOcc[i]) return false;
+  Object.assign(n, { toSeat: i, goal: [...seatFront(i)], state: "walk", speed: y.hiz, stuck: 0, slowT: 0, wait: 0, via: false, path: [] });
+  return true;
+}
+// Koltuktan kalkar; önü doluysa yakındaki boşluğa, sonra takibe döner.
+function yoldasKalk() {
+  const y = G.ortak.yoldas, k = yoldasKoltuk(); if (!y || k < 0) return false;
+  const occ = G.seatOcc[k], f = seatFront(k);
+  G.seatOcc[k] = null; G.seatsDirty = true;
+  const s = spotFree(f[0], f[1], null) ? f : ydYer(f[0], f[1], null);
+  const n = npc(s[0], s[1], { color: occ.color, look: occ.look || y.look, elder: !!occ.elder, yoldas: y.tip, speed: y.hiz });
+  if (occ.teh) n.teh = occ.teh;
+  G.npcs.push(n); G.crowdDirty = true; y.takipT = 0;
+  return true;
+}
+
+MODS.push({
+  id: "ortak-yoldas",
+  sifirla() { if (ydMesh) { disposePerson(ydMesh); ydMesh = null; ydMeshLook = null; } },
+  // Geri yükleme: yoldaş ne yolcularda ne koltuklarda varsa (örneğin snap'ten önce eklenmişse) oyuncunun yanına konur.
+  yol(geri) {
+    const y = G.ortak.yoldas; if (!y) return;
+    y.takipT = 0;
+    if (geri && !y.peron && !yoldasNpc() && yoldasKoltuk() < 0) ydYanina();
+  },
+  // Takip: ayakta, beklemiyor ve oyuncudan uzaksa 0,6 sn'de bir yanına yürür. İnme isteğinde ya da dert hedefi anons edilince kapıya gider.
+  adim(dt, h) {
+    const y = G.ortak.yoldas; if (!y || y.peron) return;
+    const n = yoldasNpc(); if (!n) return;
+    if (n.state === "walk" && n.speed !== y.hiz && !n.exitSide) n.speed = y.hiz; // çekirdek (kapı boşaltma) hızı değiştirebilir
+    if (y.bekle || n.toSeat >= 0 || n.wob || n.exitSide || n.state === "exit" || n.state === "board" || n.fallT !== undefined) return;
+    if ((y.takipT -= h) > 0) return;
+    y.takipT = YD_TAKIP_ARA;
+    const dd = dertTanim(), kapi = G.exitWant || (!!dd && G.announced && curSeg().to === dd.hedef);
+    let yer = null, cx, cz;
+    if (kapi) {
+      const d = ydKapi(G.exitWant && G.target ? G.target[1] : G.pos[1]), s = G.doorSide || 1;
+      yer = YD_KAPI_AYAK.map((k) => [s * YD_KAPI_X, d + k]).find(([x, z]) => !PINCH(z) && spotFree(x, z, n)) || null;
+    }
+    if (yer) { cx = yer[0]; cz = yer[1]; }
+    else { const o = ydMerkez(); cx = o[0]; cz = o[1]; }
+    if (Math.hypot(n.x - cx, n.z - cz) <= (yer ? .4 : YD_TAKIP_UZAK)) return;
+    if (n.state === "walk" && n.goal && Math.hypot(n.goal[0] - cx, n.goal[1] - cz) < (yer ? .45 : 1.3)) return; // zaten oraya yürüyor
+    const hedef = yer || ydYer(cx, cz, n, YD_TAKIP_YERLES);
+    Object.assign(n, { goal: hedef, state: "walk", speed: y.hiz, stuck: 0, slowT: 0, toSeat: -1 });
+  },
+  // Peronda: önce kapıdan peron kenarına çıkar, sonra oyuncuyu 0,9 m geriden izler (bekle iken yalnız çıkar, sonra durur).
+  peron(dt) {
+    const y = G.ortak.yoldas; if (!y || !y.peron || !G.pl) return;
+    const pl = G.pl, disarda = y.dis || y.px >= PLAT_MIN_X - .05; // dışarı çıkınca kalıcı: oyuncu kapıdan girerken yoldaş eşikte gidip gelmez
+    y.dis = disarda;
+    let tx = null, tz = null;
+    if (!disarda) { tx = PLAT_X; tz = ydKapi(y.pz); }
+    else if (!y.bekle) {
+      const dx = pl.x - y.px, dz = pl.z - y.pz, d = Math.hypot(dx, dz);
+      if (d > YD_PERON_UZAK) { tx = Math.max(PLAT_MIN_X, y.px + dx / d * (d - YD_PERON_DUR)); tz = y.pz + dz / d * (d - YD_PERON_DUR); }
+    }
+    if (tx === null) return;
+    const ex = tx - y.px, ez = tz - y.pz, ed = Math.hypot(ex, ez), st = Math.min(ed, (disarda ? y.hiz * YD_PERON_K : Math.max(y.hiz * YD_PERON_K, YD_KAPI_HIZ)) * dt);
+    if (ed > 1e-6) { y.px += ex / ed * st; y.pz += ez / ed * st; }
+    if (y.px >= PLAT_MIN_X - .05) { y.px = Math.max(PLAT_MIN_X, Math.min(PLAT_MAX_X, y.px)); y.pz = Math.max(-PLAT_Z, Math.min(PLAT_Z, y.pz)); } // peron dışına çıkmaz
+  },
+  // Dışarıdan px/pz yazılabilir (bekle iken): poz ve yön konum farkından çıkar.
+  ciz(dt, now) {
+    const y = G.ortak.yoldas, pe = y && (G.pl ? [G.pl.x, G.pl.z] : G.pos);
+    // Peron yoksa (hedefte koşu yok, kaçırma) yoldaş indiği yerde durur; sonuç paneli açılana dek araçtan kaybolmaz.
+    const goster = !!y && y.peron && y.px !== undefined && (G.state === "platform" ? !!G.pl : G.state === "arrived" && !G.pl);
+    if (!goster) { if (ydMesh) ydMesh.root.visible = false; return; }
+    if (!ydMesh || ydMeshLook !== y.look) {
+      if (ydMesh) disposePerson(ydMesh);
+      ydMesh = makePerson(y.look, true, scene); ydMeshLook = y.look; y.lx = undefined; y.yaw = undefined;
+    }
+    const b = ydMesh, vx = y.px - (y.lx === undefined ? y.px : y.lx), vz = y.pz - (y.lz === undefined ? y.pz : y.lz), d = Math.hypot(vx, vz);
+    y.lx = y.px; y.lz = y.pz;
+    if (dt > 0) y.yur = d / dt > .25; // duraklatılmış karede (dt = 0) son poz sürer
+    if (y.yur && dt > 0) y.wp = (y.wp || 0) + d * YD_YURU_FAZ;
+    const want = y.yur ? Math.atan2(-vx, -vz) : Math.atan2(y.px - pe[0], y.pz - pe[1]); // yürürken gittiği yöne, dururken oyuncuya bakar
+    if (y.yaw === undefined) y.yaw = want;
+    y.yaw += Math.atan2(Math.sin(want - y.yaw), Math.cos(want - y.yaw)) * Math.min(1, dt * 8);
+    b.root.visible = true; b.root.position.set(y.px, 0, y.pz); b.root.rotation.set(0, 0, 0); b.yaw = y.yaw;
+    poseBody(b, [0, 0], 0, now, y.wp || 0, !!y.yur);
+    if (y.elder) b.hip.rotation.x -= .3; // hafif kambur
+    if (STIL) setFace(b, blinkFace(b, now), true);
+  },
+  // inme: araçtan çıkar, peronda kendi mesh'iyle izler. binme: oyuncunun yanına yolcu olarak geri döner.
+  olay(tip) {
+    const y = G.ortak.yoldas; if (!y) return;
+    if (tip === "indi" && !y.peron) {
+      const n = yoldasNpc(), k = yoldasKoltuk();
+      let x = G.pos[0], z = G.pos[1];
+      if (n) { x = n.x; z = n.z; G.npcs = G.npcs.filter((o) => o !== n); G.crowdDirty = true; }
+      else if (k >= 0) { x = SEATS[k][0]; z = SEATS[k][1]; G.seatOcc[k] = null; G.seatsDirty = true; }
+      y.px = x; y.pz = z; // gerçek konumdan başlar (ışınlanma yok); peron() kapıya yürütür
+      y.peron = true; y.dis = false; y.lx = y.lz = y.yaw = undefined; y.yur = false; y.wp = 0;
+    } else if (tip === "bindi" && y.peron) {
+      y.peron = false; y.takipT = 0;
+      const n = ydYanina();
+      if (G.snap) G.snap.npcs.push(clone(n)); // yoksa düşüp "bu duraktan devam" denince yoldaş kaybolur
+    }
+  },
+  // "geride!": inmeden önce yoldaş oturuyorsa ya da uzaksa; binmeden önce peronda uzaksa.
+  engel(ne) {
+    const y = G.ortak.yoldas; if (!y) return null;
+    if (ne === "in" && !y.peron && (yoldasKoltuk() >= 0 || yoldasUzak() > YD_INME_MESAFE)) return `${y.ad} geride!`;
+    if (ne === "bin" && y.peron && yoldasUzak() > YD_BINME_MESAFE) return `${y.ad} geride!`;
+    return null;
+  },
+});
+// <<< BÖLGE ortak-yoldas
+
+// >>> BÖLGE ortak-yuk
+// Hacimli yük: kutu (kolun altında, uzun) ve bavul (yerde, tekerlekli). Durum G.ortak.yuk; yolcu referansı tutulmaz.
+// Yük nesneleri sahnede (busG'de değil): peronda araç gidince yük oyuncuyla kalır, kalkan aracın kopyasına girmez.
+const YUK_KAPI_T = .9, YUK_CARP_ARA = 1.5;                  // kapıda takılma süresi (sn); aynı yolcuya iki çarpma arası (sn)
+const KUTU_YARI = .75, KUTU_R = .35, KUTU_YAN = .27, KUTU_DON = .6, KUTU_DON_T = .15; // yarı boy, uç yarıçapı, sağa kayıklık, dönüş eşiği (rad/sn), dönüş hafızası
+const BAV_ARKA = .45, BAV_YAKIN = .9, BAV_KACIS = 1.2, BAV_TUT = .5, BAV_R = .35, BAV_GOVDE = .3; // oyuncunun arkası, "yanında" sınırı, kaçış, yeniden tutma, çarpma, duvar payı
+const BAV_K = .55, BAV_EL = .2, BAV_K_SERBEST = 1.1;        // araç kuvvetinin bavula etkisi; el üstteyken oranı; serbestken
+const BAV_YAY = 10, BAV_SOND = 3.2, BAV_YAY_D = 6, BAV_SOND_D = 4, BAV_SURT = 1.2; // yürürken yay/sönüm, dururken yay/sönüm, serbest sürtünme
+const BAV_CARP_HIZ = .3, BAV_YAKALA = 3; // yolcuyu itme ve çarpma için en az hız; peronda bu kadar uzaksa yanına ışınlanır
+const YUK_YURU = { kutu: .85, bavul: .8 };
+
+const yukAci = (a) => Math.atan2(Math.sin(a), Math.cos(a));
+const yukNokta = [0, 0];
+// Görseller bir kez yaratılır. Kutu oyuncunun kalçasına takılır (dengeyle birlikte yatar), bavul sahnede durur.
+const kutuG = new THREE.Group();
+{
+  const g = new THREE.Mesh(new THREE.BoxGeometry(.24, .26, 1.5), M(0xb98a52));
+  const bant = new THREE.Mesh(new THREE.BoxGeometry(.246, .266, .12), M(0xd9b98a));
+  const etiket = new THREE.Mesh(new THREE.BoxGeometry(.012, .1, .22), M(0xf2efe6)); etiket.position.set(.126, 0, .4);
+  kutuG.add(g, bant, etiket);
+  kutuG.position.set(KUTU_YAN, J.armY - .3, 0); kutuG.visible = false; player.hip.add(kutuG);
+}
+const bavulG = new THREE.Group();
+{
+  const govde = new THREE.Mesh(new THREE.BoxGeometry(.5, .64, .26), M(0xc0392b)); govde.position.y = .38;
+  const serit = new THREE.Mesh(new THREE.BoxGeometry(.52, .07, .27), M(0xe8c15a)); serit.position.y = .5;
+  bavulG.add(govde, serit);
+  for (const sx of [-.2, .2]) for (const sz of [-.08, .08]) { const t = new THREE.Mesh(new THREE.CylinderGeometry(.035, .035, .04, 8), M(0x222222)); t.rotation.z = Math.PI / 2; t.position.set(sx, .035, sz); bavulG.add(t); }
+  for (const sx of [-.12, .12]) { const k = new THREE.Mesh(new THREE.BoxGeometry(.014, .3, .014), M(0x777777)); k.position.set(sx, .84, .1); bavulG.add(k); }
+  const tutak = new THREE.Mesh(new THREE.BoxGeometry(.32, .03, .035), M(0x222222)); tutak.position.set(0, .99, .1); bavulG.add(tutak); // oyuncuya bakan yüz +z
+  bavulG.visible = false; scene.add(bavulG);
+}
+const yukHalka = new THREE.Mesh(new THREE.RingGeometry(.42, .55, 28), new THREE.MeshBasicMaterial({ color: 0xff8a00, transparent: true, depthTest: false }));
+yukHalka.rotation.x = -Math.PI / 2; yukHalka.position.y = .03; yukHalka.renderOrder = 19; yukHalka.visible = false; scene.add(yukHalka);
+let bavulRy = 0; // bavulun çizim yönü (oyuncuya bakar), yumuşak döner
+const yukGizle = () => { kutuG.visible = bavulG.visible = yukHalka.visible = false; };
+
+function yukVar() { return !!G.ortak.yuk; }
+function yukYok() { G.ortak.yuk = null; yukGizle(); }
+function yukYaninda() {
+  const y = G.ortak.yuk; if (!y) return false;
+  if (y.tip === "kutu") return true;
+  const px = G.pl ? G.pl.x : G.pos[0], pz = G.pl ? G.pl.z : G.pos[1];
+  return Math.hypot(y.x - px, y.z - pz) < BAV_YAKIN;
+}
+// Bavulu oyuncunun arkasına koyar, durdurur ve yeniden tutturur. Araç içindeyse duvara ve koltuğa girmez.
+function yukKonumla(y, ay = 0) {
+  const px = G.pl ? G.pl.x : G.pos[0], pz = G.pl ? G.pl.z : G.pos[1];
+  y.ay = ay; y.x = px + Math.sin(ay) * BAV_ARKA; y.z = pz + Math.cos(ay) * BAV_ARKA;
+  if (!G.pl) { yukNokta[0] = y.x; yukNokta[1] = y.z; pushStatic(yukNokta, BAV_GOVDE); y.x = yukNokta[0]; y.z = yukNokta[1]; }
+  y.vx = y.vz = 0; y.serbest = false; y.kapiT = 0; y.kapiL = -9;
+}
+function yukVer(tip, ad) {
+  const y = { tip, ad, x: 0, z: 0, vx: 0, vz: 0, serbest: false, kapiT: 0, carpti: 0,
+    kacti: 0, sa: 0, kapiL: -9, ay: 0, ly: player.yaw, lyS: 0, donT: 0 }; // kacti: bavul kaç kez kaçtı (dert sonucu için)
+  G.ortak.yuk = y;
+  if (tip === "kutu") { y.x = G.pl ? G.pl.x : G.pos[0]; y.z = G.pl ? G.pl.z : G.pos[1]; }
+  else yukKonumla(y, 0);
+  bavulRy = 0;
+}
+// Aynı yolcuya 1,5 sn'de bir çarpar. Sayaç yolcu üstünde sayı olarak durur (düşünce geri yüklenen kopyayla birlikte).
+function yukCarp(y, n, bx, bz) {
+  if (n.yukT !== undefined && y.sa >= n.yukT && y.sa - n.yukT < YUK_CARP_ARA) return false;
+  n.yukT = y.sa;
+  const v0 = n.v[0], v1 = n.v[1];
+  bump(n); anger(n); y.carpti++;
+  if (bz !== undefined) { // serbest bavul: sendeleme oyuncudan değil bavuldan yolcuya doğru olsun
+    const dx = n.x - bx, dz = n.z - bz, d = Math.hypot(dx, dz) || 1;
+    n.v[0] = v0 + dx / d * 1.2; n.v[1] = v1 + dz / d * 1.2;
+  }
+  kanca("olay", "yuk-carpti", { n });
+  return true;
+}
+const yukHedefte = (n) => n.state !== "exit" && n.state !== "board";
+
+MODS.push({
+  id: "ortak-yuk",
+  sifirla() { yukGizle(); },
+  mod(m) { const y = G.ortak.yuk; if (y) m.yuru *= YUK_YURU[y.tip]; },
+  yol(restored) { const y = G.ortak.yuk; if (y && restored) { yukKonumla(y, 0); y.serbest = false; } }, // düşüp devam: oyuncu eski yerine döndü, bavul yanına gelir
+  olay(tip) {
+    const y = G.ortak.yuk; if (!y) return;
+    if (tip === "bindi" && y.tip === "bavul") yukKonumla(y, 0);
+    else if (tip === "indi" || tip === "bindi") { y.kapiT = 0; y.kapiL = -9; }
+  },
+  engel(ne) {
+    const y = G.ortak.yuk; if (ne !== "in" || !y) return null;
+    if (y.tip === "bavul" && !yukYaninda()) { y.kapiT = 0; return `${y.ad} geride!`; }
+    // Çekirdek kapıdayken her adım sorar; kesintisiz sorulduğu sürece süre birikir, ara verilirse sıfırlanır.
+    // Aradaki boşluk sayılmaz ama birikmiş süre silinmez; yalnız "indi"/"bindi" ve yeni yolda sıfırlanır.
+    if (y.sa - y.kapiL <= .05) y.kapiT += y.sa - y.kapiL;
+    y.kapiL = y.sa;
+    return y.kapiT < YUK_KAPI_T ? `${y.ad} kapıya takıldı!` : null;
+  },
+  adim(dt, h) {
+    const y = G.ortak.yuk; if (!y) return;
+    y.sa += dt;
+    // Dönüş hızı: yaw yalnız çizimde güncellenir, değişim anında iki değişim arası süreye bölünür.
+    const yaw = player.yaw, dy = Math.abs(yukAci(yaw - y.ly));
+    if (dy > 1e-4) { if (dy / Math.max(dt, y.sa - y.lyS) > KUTU_DON) y.donT = KUTU_DON_T; y.ly = yaw; y.lyS = y.sa; }
+    y.donT = Math.max(0, y.donT - dt);
+    const ox = G.pos[0], oz = G.pos[1];
+    if (y.tip === "kutu") {
+      const s = Math.sin(yaw), c = Math.cos(yaw), cx = ox + c * KUTU_YAN, cz = oz - s * KUTU_YAN, fx = -s * KUTU_YARI, fz = -c * KUTU_YARI;
+      y.x = cx; y.z = cz;
+      if (G.sitting >= 0 || !(G.walking || y.donT > 0)) return;
+      for (const n of G.npcs) {
+        if (!yukHedefte(n)) continue;
+        if (Math.hypot(n.x - (cx + fx), n.z - (cz + fz)) < KUTU_R || Math.hypot(n.x - (cx - fx), n.z - (cz - fz)) < KUTU_R) yukCarp(y, n);
+      }
+      return;
+    }
+    // Bavul
+    if (G.sitting >= 0) { // oturunca bavul ayağının dibinde durur
+      const k = Math.max(0, 1 - 5 * h); y.vx *= k; y.vz *= k; y.x += y.vx * h; y.z += y.vz * h;
+      return;
+    }
+    if (G.walking) y.ay = yaw; // arkada durma yönü son yürüyüş yönüdür; dururken öne dönen çizim onu kaydırmasın
+    if (!y.serbest) {
+      const el = !G.walking && G.stumble <= 0, fk = BAV_K * (el ? BAV_EL : 1), sp = el ? BAV_YAY_D : BAV_YAY, sd = el ? BAV_SOND_D : BAV_SOND;
+      const tx = ox + Math.sin(y.ay) * BAV_ARKA, tz = oz + Math.cos(y.ay) * BAV_ARKA;
+      y.vx += (G.F[0] * fk + (tx - y.x) * sp - y.vx * sd) * h; y.vz += (G.F[1] * fk + (tz - y.z) * sp - y.vz * sd) * h;
+      y.x += y.vx * h; y.z += y.vz * h;
+      yukNokta[0] = y.x; yukNokta[1] = y.z;
+      if (pushStatic(yukNokta, BAV_GOVDE)) { y.x = yukNokta[0]; y.z = yukNokta[1]; y.vx *= .6; y.vz *= .6; }
+      if (Math.hypot(y.x - ox, y.z - oz) > BAV_KACIS) {
+        y.serbest = true; y.kacti++;
+        flash("BAVUL KAÇTI!", C.danger); tone(150, .25, "sawtooth", .07); buzz(60);
+      }
+      return;
+    }
+    // Serbest: araç kuvvetiyle yuvarlanır, duvarda durur, yolcuya çarpar.
+    y.vx += (G.F[0] * BAV_K_SERBEST - y.vx * BAV_SURT) * h; y.vz += (G.F[1] * BAV_K_SERBEST - y.vz * BAV_SURT) * h;
+    y.x += y.vx * h; y.z += y.vz * h;
+    yukNokta[0] = y.x; yukNokta[1] = y.z;
+    if (pushStatic(yukNokta, BAV_GOVDE)) { y.x = yukNokta[0]; y.z = yukNokta[1]; y.vx = y.vz = 0; }
+    const hiz = Math.hypot(y.vx, y.vz);
+    for (const n of G.npcs) { // itme hız şartsız: duran bavul da yolcuyu içinden çıkarır
+      if (!yukHedefte(n)) continue;
+      const dx = n.x - y.x, dz = n.z - y.z, d = Math.hypot(dx, dz) || 1e-3;
+      if (d < BAV_R && hiz > BAV_CARP_HIZ) yukCarp(y, n, y.x, y.z);
+      if (n.state === "stand" && d < BAV_R + .3) stepAside(n, dx / d, dz / d, h); // yakındakiler hafifçe çekilir
+    }
+    if (Math.hypot(y.x - ox, y.z - oz) < BAV_TUT) { y.serbest = false; y.vx = y.vz = 0; beep(660, .06); }
+  },
+  peron(dt) {
+    const y = G.ortak.yuk, pl = G.pl; if (!y || !pl) return;
+    y.sa += dt;
+    if (y.tip === "kutu") { y.x = pl.x; y.z = pl.z; return; }
+    if (pl.moving) y.ay = pl.yaw;
+    const tx = pl.x + Math.sin(y.ay) * BAV_ARKA, tz = pl.z + Math.cos(y.ay) * BAV_ARKA;
+    if (Math.hypot(tx - y.x, tz - y.z) > BAV_YAKALA) { y.x = tx; y.z = tz; y.vx = y.vz = 0; } // ilk karede araçtan peron kenarına uzak kaldıysa yanına gelir
+    y.serbest = false;
+    y.vx += ((tx - y.x) * BAV_YAY - y.vx * BAV_SOND) * dt; y.vz += ((tz - y.z) * BAV_YAY - y.vz * BAV_SOND) * dt;
+    y.x += y.vx * dt; y.z += y.vz * dt;
+  },
+  ciz(dt, now) {
+    const y = G.ortak.yuk;
+    if (!y) { if (kutuG.visible || bavulG.visible || yukHalka.visible) yukGizle(); return; }
+    const kutu = y.tip === "kutu";
+    kutuG.visible = kutu; bavulG.visible = !kutu;
+    if (kutuG.parent !== player.hip) player.hip.add(kutuG); // oyuncu yeniden kurulduysa takılı kalsın
+    const poz = G.sitting < 0 && !G.grab && !(G.wave > 0) && !cup.visible; // oturur, tutar, el sallar ya da bardak taşırken kol onlarındır
+    if (kutu) {
+      yukHalka.visible = false;
+      if (poz) { player.arms[1].rotation.set(.05, 0, .26); player.elbows[1].rotation.x = .3; } // sağ kol kutunun üstünde
+      return;
+    }
+    const px = G.pl ? G.pl.x : G.pos[0], pz = G.pl ? G.pl.z : G.pos[1], dx = px - y.x, dz = pz - y.z;
+    bavulG.position.set(y.x, 0, y.z);
+    if (dx * dx + dz * dz > 1e-4) bavulRy += yukAci(Math.atan2(dx, dz) - bavulRy) * Math.min(1, dt * 8);
+    bavulG.rotation.y = bavulRy;
+    yukHalka.visible = y.serbest;
+    if (y.serbest) { yukHalka.position.x = y.x; yukHalka.position.z = y.z; yukHalka.material.opacity = .5 + .4 * Math.sin(now * 10); }
+    else if (poz && dx * dx + dz * dz < (BAV_YAKIN + .3) * (BAV_YAKIN + .3)) { player.arms[1].rotation.set(-.62, 0, .05); player.elbows[1].rotation.x = .12; } // el arkada, tutakta
+  },
+});
+// <<< BÖLGE ortak-yuk
+
+// >>> BÖLGE teh-kahve
+// Kahveli arkadaş grubu: ellerinde bardak, kendi aralarında konuşurlar; arada biri kahkahayla döner, yakındaysan kahve üstüne dökülür.
+// Durum yolcu nesnesinde (JSON'a uygun): n.khFaz (0 yok, 1 kahkaha uyarısı, 2 dönüş), n.khT, n.khS (dönüş yönü), n.khDok, n.khKon (konuşma bitiş saati). Grup sayacı G.ortak.kahve.
+const KAHVE_ID = "teh-kahve";
+const KAHVE_BEKLE = [6, 10];       // kahkaha aralığı (sn)
+const KAHVE_KONUS = [2.4, 4.2];    // iki konuşma balonu arası (sn)
+const KAHVE_UYARI = .9;            // balon çıkınca dönüşe kalan süre (oyuncunun kaçma payı)
+const KAHVE_DON = .7;              // dönüş süresi
+const KAHVE_SON = .3;              // dönüşten sonra toparlanma
+const KAHVE_ACI = 2.6;             // dönüşün tepe açısı (rad)
+const KAHVE_MENZIL = .75;          // dönüş anında bu kadar yakındaki oyuncuya dökülür
+const KAHVE_LEKE = .35;
+const KAHVE_BALON_UZAK = 5;        // konuşma balonları yalnız oyuncuya bu kadar yakınken
+const KAHVE_SOZ = ["Dün gece ya!", "Yok artık!", "Anlatsana!", "Sonra ne oldu?", "Ben de dedim ki...", "Çok iyiymiş."];
+// Bardak geometrisi ve malzemesi modül düzeyinde paylaşılır: yolcu mesh'i yok edilirken dispose edilmez (disposePerson yalnız kendi parçalarını yok eder).
+const kahveGovde = new THREE.CylinderGeometry(.05, .04, .11, 12), kahveBant = new THREE.CylinderGeometry(.049, .0445, .05, 12), kahveUst = new THREE.CircleGeometry(.045, 12);
+const kahveMGovde = M(0xf3efe6), kahveMBant = M(0xb8793d), kahveMUst = M(0x4a2c17);
+const kahveRast = ([a, b]) => a + Math.random() * (b - a);
+const kahveAra = (a, b) => Math.atan2(Math.sin(a - b), Math.cos(a - b));
+
+function kahveKur(n, b) {
+  if (b.khCup) return;
+  const c = new THREE.Group();
+  c.add(new THREE.Mesh(kahveGovde, kahveMGovde));
+  const bant = new THREE.Mesh(kahveBant, kahveMBant); bant.position.y = -.01; c.add(bant);
+  const ust = new THREE.Mesh(kahveUst, kahveMUst); ust.rotation.x = -Math.PI / 2; ust.position.y = .056; c.add(ust);
+  c.position.y = J.cupY; c.scale.setScalar(J.cupS);
+  b.arms[1].add(c); b.khCup = c; b.khK = 0; b.khY = undefined;
+}
+const kahveUygun = (n) => n.state === "stand" && !n.wob && !n.mad && !n.act && !n.elder;
+
+MODS.push({
+  id: KAHVE_ID, teh: { olasilik: .45, adet: [2, 3] },
+  npcKur(n, b) { if (n.teh === KAHVE_ID) kahveKur(n, b); },
+  adim(dt) {
+    let varMi = false, aktif = false;
+    for (const n of G.npcs) if (n.teh === KAHVE_ID) { varMi = true; if (n.khFaz) aktif = true; }
+    if (!varMi) return;
+    const K = G.ortak.kahve || (G.ortak.kahve = { saat: 0, sonra: kahveRast(KAHVE_BEKLE), konus: kahveRast(KAHVE_KONUS) });
+    K.saat += dt;
+    if (!aktif && K.sonra <= 0) K.sonra = kahveRast(KAHVE_BEKLE); // gülen yolcu listeden çıktıysa sayaç bayat kalmasın
+    // Süren kahkaha: uyarı, dönüş, toparlanma. Dönüşün tepe anında oyuncu yakındaysa kahve dökülür.
+    for (const n of G.npcs) {
+      if (n.teh !== KAHVE_ID || !n.khFaz) continue;
+      if (!kahveUygun(n)) { n.khFaz = 0; n.khDok = false; K.sonra = kahveRast(KAHVE_BEKLE); continue; } // kesilen kahkaha da sayacı yeniden kurar; npcCiz ile aynı koşul
+      n.khT += dt;
+      if (n.khFaz === 1 && n.khT >= KAHVE_UYARI) n.khFaz = 2;
+      if (n.khFaz === 2) {
+        if (!n.khDok && n.khT >= KAHVE_UYARI + KAHVE_DON * .5) {
+          n.khDok = true;
+          if (Math.hypot(n.x - G.pos[0], n.z - G.pos[1]) < KAHVE_MENZIL) {
+            ustKir("leke", KAHVE_LEKE); flash("KAHVE ÜSTÜNE DÖKÜLDÜ!", C.danger, 1300);
+            say(n, "Ay pardon!", "talk", 1.6); tone(260, .18, "sawtooth", .07); tone(190, .22, "sawtooth", .06, .12);
+          }
+        }
+        if (n.khT >= KAHVE_UYARI + KAHVE_DON + KAHVE_SON) { n.khFaz = 0; n.khDok = false; K.sonra = kahveRast(KAHVE_BEKLE); }
+      }
+    }
+    if (aktif) return;
+    // Yeni kahkaha: balon önce, dönüş sonra.
+    K.sonra -= dt;
+    if (K.sonra <= 0) {
+      const ad = G.npcs.filter((n) => n.teh === KAHVE_ID && kahveUygun(n));
+      if (!ad.length) K.sonra = 1;
+      else {
+        const n = ad[Math.floor(Math.random() * ad.length)];
+        n.khFaz = 1; n.khT = 0; n.khDok = false; n.khS = Math.random() < .5 ? 1 : -1;
+        say(n, "Ahahaha!", "warn", KAHVE_UYARI + .3); tone(700, .06, "triangle", .04); tone(820, .06, "triangle", .04, .1);
+        return;
+      }
+    }
+    // Aralarında konuşma balonu.
+    K.konus -= dt;
+    if (K.konus <= 0) {
+      K.konus = kahveRast(KAHVE_KONUS);
+      const ad = G.npcs.filter((n) => n.teh === KAHVE_ID && kahveUygun(n) && !n.khFaz);
+      if (ad.length) {
+        const n = ad[Math.floor(Math.random() * ad.length)];
+        n.khKon = K.saat + 1.6;
+        if (Math.hypot(n.x - G.pos[0], n.z - G.pos[1]) < KAHVE_BALON_UZAK) say(n, KAHVE_SOZ[Math.floor(Math.random() * KAHVE_SOZ.length)], "talk", 1.6);
+      }
+    }
+  },
+  npcCiz(n, b, dt, now) {
+    if (n.teh !== KAHVE_ID) { if (b.khCup) b.khCup.visible = false; return; }
+    if (!b.khCup) kahveKur(n, b);
+    const cup = b.khCup; cup.visible = n.fade > .5; // yolcu saydamlaşınca bardak (opak) havada kalmasın
+    if (G.state === "fallen" || !kahveUygun(n)) { cup.rotation.set(0, 0, 0); return; }
+    const K = G.ortak.kahve, f = n.khFaz || 0, a0 = b.arms[0], a1 = b.arms[1];
+    // En yakın arkadaşına döner (yoksa kendi yönünde kalır).
+    let p = null, pd = 1e9;
+    for (const o of G.npcs) if (o !== n && o.teh === KAHVE_ID) { const d = Math.hypot(o.x - n.x, o.z - n.z); if (d < pd) { pd = d; p = o; } }
+    if (b.khY === undefined) b.khY = b.yaw;
+    if (p && pd > .05) b.khY += kahveAra(Math.atan2(n.x - p.x, n.z - p.z), b.khY) * Math.min(1, dt * 5);
+    // Konuşan elini oynatır, başını sallar.
+    const konus = K && n.khKon > K.saat && !f ? 1 : 0;
+    b.khK += (konus - b.khK) * Math.min(1, dt * 8);
+    const kk = b.khK;
+    a0.rotation.x = a0.rotation.x * (1 - kk) + (-.9 + Math.sin(now * 5 + n.phase) * .3) * kk;
+    b.elbows[0].rotation.x = b.elbows[0].rotation.x * (1 - kk) + (1.2 + Math.sin(now * 5 + n.phase + 1) * .3) * kk;
+    b.head.rotation.x = Math.sin(now * 9 + n.phase) * .07 * kk;
+    a1.rotation.set(.7, 0, .55); b.elbows[1].rotation.x = 0; // bardağı önde tutar
+    let don = 0;
+    if (f) {
+      // Kahkaha: geriye yaslanıp omuzları sarsılır; dönüşte bardak kolu açılır.
+      const e = Math.min(1, n.khT / .25), sh = Math.sin(now * 24 + n.phase);
+      b.hip.rotation.x += (-.16 + sh * .05) * e; b.head.rotation.x = -.28 * e + sh * .04 * e;
+      if (f === 2) {
+        const q = Math.max(0, Math.min(1, (n.khT - KAHVE_UYARI) / KAHVE_DON)), s = Math.sin(Math.PI * q);
+        don = s * KAHVE_ACI * (n.khS || 1); a1.rotation.z += .6 * s; a1.rotation.x -= .3 * s;
+      }
+    }
+    b.body.rotation.y = b.khY + don;
+    cup.rotation.x = -a1.rotation.x - b.hip.rotation.x; cup.rotation.z = -a1.rotation.z - b.hip.rotation.z;
+  },
+});
+// <<< BÖLGE teh-kahve
+
+// >>> BÖLGE teh-semsiye
+// Yağmurlu şemsiye: elinde kapalı ıslak şemsiye taşıyan yolcunun ayağının dibinde ıslak leke. Lekede toparlanma yavaşlar, kuvvet artar; yakında üst baş ıslanır.
+const SMS_ID = "teh-semsiye";
+const SMS_R = .8;            // leke yarıçapı (m)
+const SMS_TOPARLA = .65, SMS_KUVVET = 1.15; // lekedeyken G.mod çarpanları
+const SMS_ISLAK_R = .68;     // bu mesafede üst baş ıslanır (iki beden .6 m'den fazla yaklaşamaz, .5 ulaşılamazdı)
+const SMS_ISLAK_HIZ = .05;   // 1/sn
+const SMS_ISLAK_ARA = .25;   // ustKir çağrıları arası (sn); biriken miktar tek seferde verilir
+const SMS_UYARI = "ZEMİN ISLAK", SMS_UYARI_MS = 1100;
+const SMS_EL_Y = J.phoneY + .04; // el: ön kol grubunda telefon yüksekliğinin hemen altı
+// Paylaşımlı geometri ve malzemeler: modül yüklenirken bir kez. Yolcuya takılan her şey bunları kullanır, yolcu yok edilirken dispose edilmez.
+const smsKumasM = new THREE.MeshPhongMaterial({ color: 0x22314a, shininess: 70, specular: 0x556677 });
+const smsBagM = new THREE.MeshLambertMaterial({ color: 0x141c2a });
+const smsMetalM = new THREE.MeshPhongMaterial({ color: 0x9aa3ad, shininess: 90 });
+const smsSapM = new THREE.MeshLambertMaterial({ color: 0x3a2a1c });
+const smsLekeM = new THREE.MeshPhongMaterial({ color: 0x0f1822, transparent: true, opacity: .55, shininess: 140, specular: 0x8aa0b8, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 });
+const smsHalkaM = new THREE.MeshBasicMaterial({ color: 0xa9bfd4, transparent: true, opacity: .25, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 });
+const smsLekeG = new THREE.CircleGeometry(SMS_R, 28), smsHalkaG = new THREE.RingGeometry(SMS_R - .07, SMS_R, 32);
+// Şablon: y=0 el hizası, uç aşağıda; her yolcu için klonlanır (geometri ve malzeme paylaşılır).
+const smsSablon = new THREE.Group();
+{
+  const mk = (g, m, x, y, z = 0) => { const o = new THREE.Mesh(g, m); o.position.set(x, y, z); smsSablon.add(o); return o; };
+  mk(new THREE.CylinderGeometry(.034, .012, .4, 10), smsKumasM, 0, -.3);          // sarılı kumaş
+  mk(new THREE.CylinderGeometry(.037, .037, .03, 10), smsBagM, 0, -.17);          // bağ
+  mk(new THREE.CylinderGeometry(.008, .008, .1, 6), smsMetalM, 0, -.06 + .01);    // sap (kumaşın üstü)
+  mk(new THREE.CylinderGeometry(.004, .008, .07, 6), smsMetalM, 0, -.535);        // uç
+  mk(new THREE.CylinderGeometry(.014, .014, .12, 8), smsSapM, 0, .02);            // tutamak
+  mk(new THREE.TorusGeometry(.04, .014, 6, 10, Math.PI), smsSapM, .04, .08); // kıvrık uç
+}
+// Yolcunun mesh'ine takar (npcKur ve npcCiz içinden, tekrar takmaz). Hepsi b.root altında: crowd yeniden kurulunca kendiliğinden gider.
+function smsTak(b) {
+  if (b.smsA) return;
+  const um = smsSablon.clone(true); um.position.set(0, SMS_EL_Y, 0); b.elbows[1].add(um);
+  const leke = new THREE.Group(); leke.position.y = .012;
+  const d = new THREE.Mesh(smsLekeG, smsLekeM); d.rotation.x = -Math.PI / 2;
+  const r = new THREE.Mesh(smsHalkaG, smsHalkaM); r.rotation.x = -Math.PI / 2; r.position.y = .002;
+  leke.add(d, r); b.root.add(leke);
+  b.smsA = { um, leke };
+}
+// Oyuncu (ayakta, araç içinde) bir taşıyıcının r yarıçaplı lekesinde mi
+function smsIcinde(r) {
+  if (G.pl || G.sitting >= 0 || (G.state !== "ride" && G.state !== "doors")) return false;
+  for (const n of G.npcs) if (n.teh === SMS_ID && n.state !== "board" && Math.hypot(n.x - G.pos[0], n.z - G.pos[1]) < r) return true;
+  return false;
+}
+MODS.push({
+  id: SMS_ID, teh: { olasilik: .35, adet: [1, 1] },
+  hat() { G.ortak.sms = { uyar: false, ic: false, bir: 0, t: 0 }; },
+  mod(m) { if (smsIcinde(SMS_R)) { m.toparla *= SMS_TOPARLA; m.kuvvet *= SMS_KUVVET; } },
+  adim(dt) {
+    const s = G.ortak.sms; if (!s) return;
+    const ic = smsIcinde(SMS_R);
+    if (ic && !s.ic && !s.uyar) { s.uyar = true; flash(SMS_UYARI, C.danger, SMS_UYARI_MS); } // ilk giriş
+    s.ic = ic;
+    if (smsIcinde(SMS_ISLAK_R)) {
+      s.bir += SMS_ISLAK_HIZ * dt; s.t += dt;
+      if (s.t >= SMS_ISLAK_ARA) { ustKir("islak", s.bir); s.bir = 0; s.t = 0; }
+    }
+  },
+  npcKur(n, b) { if (n.teh === SMS_ID) smsTak(b); },
+  npcCiz(n, b, dt, now) {
+    if (n.teh !== SMS_ID) return;
+    smsTak(b);
+    const r = b.root.rotation; // sendeleyen ya da devrilen yolcuyla leke yatmasın
+    const gor = n.fade > .5; // setFade gölgeyi bu kuralla gizler; paylaşımlı malzeme saydamlaşmaz, yalnız görünürlük kapanır
+    b.smsA.um.visible = gor;
+    // Binen ve inen yolcunun kökü araç dışına kayar: leke orada yüzmesin (smsIcinde ile aynı kural)
+    b.smsA.leke.visible = gor && n.state !== "board" && n.state !== "exit" && Math.abs(r.x) < .02 && Math.abs(r.z) < .02;
+  },
+  ciz(dt, now) { smsHalkaM.opacity = .22 + .08 * Math.sin(now * 2.4); }, // kenar parıltısı
+});
+// <<< BÖLGE teh-semsiye
+
+// >>> BÖLGE teh-canta
+// Sırt çantalı yolcu: sallanma ya da 8-12 sn'de bir önce "Hangi durak?" der, başını çevirir, sonra çantasıyla 180° döner.
+// Dönüş sırasında arkasında yakında duruyorsan çanta yüzüne gelir. Durum yolcu nesnesinde (c* alanları, JSON'a uygun); görsel npcKur'da takılır.
+const CANTA_ID = "teh-canta";
+const CANTA_ARA = [8, 12];      // iki dönüş arası (sn)
+const CANTA_ILK = [4, 9];       // yolcu ilk görüldükten sonra ilk dönüşe kadar (sn)
+const CANTA_UYARI = .8;         // balon ile dönüş arası (sn): kaçmak için süre
+const CANTA_TUT = 1.2;          // dönüş başlayınca dönük kalma süresi (sn)
+const CANTA_GERI = .6;          // geri dönme süresi (sn)
+const CANTA_SOGUMA = 3;         // bir dönüşten sonra sarsıntıyla yeniden tetiklenmeme (sn)
+const CANTA_HIZ = 9, CANTA_GERI_HIZ = 5.5; // dönüş hızları (rad/sn)
+const CANTA_MENZIL = .7;        // çantanın vurduğu uzaklık (m)
+const CANTA_ITME = 1.6;         // oyuncuya verilen itme
+const CANTA_BAKIS = .9;         // uyarıda omuz üstünden bakış açısı (rad)
+const CANTA_SOZ = ["Hangi durak?", "Neresi burası?"];
+const CANTA_RENK = [[0xd94f3d, 0xf2b8a0], [0x2f6fb5, 0x9cc3e8], [0x3f8f5a, 0xb5d9a8]]; // ana, cep
+// Geometri ve malzeme bir kez yaratılır, bütün yolcular paylaşır (disposePerson bunlara dokunmaz).
+const cantaKutu = new THREE.BoxGeometry(1, 1, 1);
+const cantaMat = new THREE.MeshLambertMaterial({ vertexColors: true });
+const cantaGeo = CANTA_RENK.map(([a, b]) => {
+  const koyu = new THREE.Color(a).multiplyScalar(.68).getHex(), L = [];
+  part(L, cantaKutu, a, 0, 0, 0, .38, .46, .22);          // gövde
+  part(L, cantaKutu, koyu, 0, .2, 0, .385, .1, .235);     // kapak
+  part(L, cantaKutu, b, 0, -.1, .13, .28, .2, .06);       // arka cep
+  for (const s of [-1, 1]) {
+    part(L, cantaKutu, koyu, s * .205, -.12, 0, .04, .2, .14); // yan cepler
+    part(L, cantaKutu, 0x2b2e33, s * .1, .22, -.06, .04, .03, .3); // omuz askısı
+  }
+  return mergeParts(L);
+});
+const cantaListe = (n) => n.teh === CANTA_ID;
+const cantaAra = (a) => a[0] + Math.random() * (a[1] - a[0]);
+// Dönüş başlatılabilir mi: sakin, ayakta duran, oyun akışında
+const cantaUygun = (n) => (G.state === "ride" || G.state === "doors") && n.state === "stand" && !n.wob && !n.mad && n.fallT === undefined;
+function cantaUyar(n, yon) {
+  n.cF = 1; n.cT = CANTA_UYARI; n.cS = yon || (Math.random() < .5 ? -1 : 1);
+  say(n, CANTA_SOZ[Math.floor(Math.random() * CANTA_SOZ.length)], "warn", CANTA_UYARI + .6);
+}
+// Dönüşün orta noktasında çanta oyuncuyu süpürür: yalnız yolcunun arka yarısında ve yakındaysa
+function cantaVur(n) {
+  if (G.sitting >= 0 || G.state === "fallen") return;
+  const dx = G.pos[0] - n.x, dz = G.pos[1] - n.z, d = Math.hypot(dx, dz);
+  if (d > CANTA_MENZIL) return;
+  const yaw = n.yaw ?? 0, bx = Math.sin(yaw), bz = Math.cos(yaw); // sırtın baktığı yön
+  if ((dx * bx + dz * bz) < 0) return;
+  const ux = d > .01 ? dx / d : bx, uz = d > .01 ? dz / d : bz;
+  G.v[0] += ux * CANTA_ITME; G.v[1] += uz * CANTA_ITME;
+  flash("ÇANTA!", C.danger); tone(150, .18, "sawtooth", .14); tone(110, .14, "triangle", .1, .06); buzz(70);
+  say(n, "Pardon!", "fun", 1.3);
+}
+MODS.push({
+  id: CANTA_ID, teh: { olasilik: .45, adet: [1, 1] },
+  olay(tip, v) {
+    // Yana sarsıntı: çantalı hemen "Hangi durak?" der (balon, sonra dönüş)
+    if (tip !== "sarsinti" || !v || (v.k !== "left" && v.k !== "right")) return;
+    for (const n of G.npcs) {
+      if (!cantaListe(n) || !cantaUygun(n) || (n.cF || 0) !== 0 || (n.cB || 0) > 0) continue;
+      cantaUyar(n, v.k === "left" ? -1 : 1);
+    }
+  },
+  adim(dt, h) {
+    for (const n of G.npcs) {
+      if (!cantaListe(n)) continue;
+      if (n.cF === undefined) { n.cF = 0; n.cT = cantaAra(CANTA_ILK); n.cA = 0; n.cS = 1; n.cB = 0; n.cVur = false; }
+      n.cT -= h; if (n.cB > 0) n.cB -= h;
+      if (n.cF === 0) { if (n.cT <= 0) { if (cantaUygun(n)) cantaUyar(n); else n.cT = .5; } }
+      else if (n.cF === 1) { if (n.cT <= 0) { n.cF = 2; n.cT = CANTA_TUT; n.cVur = false; } }
+      else if (n.cF === 2) { if (n.cT <= 0) { n.cF = 3; n.cT = CANTA_GERI; n.cB = CANTA_SOGUMA; } }
+      else if (n.cT <= 0 && n.cA <= .001) { n.cF = 0; n.cT = cantaAra(CANTA_ARA); n.cA = 0; }
+      const hedef = n.cF === 2 ? Math.PI : 0, hiz = (n.cF === 2 ? CANTA_HIZ : CANTA_GERI_HIZ) * h;
+      n.cA += Math.max(-hiz, Math.min(hiz, hedef - n.cA));
+      if (n.cF === 2 && !n.cVur && n.cA >= Math.PI / 2) { n.cVur = true; cantaVur(n); }
+    }
+  },
+  npcKur(n, b) {
+    if (!cantaListe(n)) return;
+    const k = Math.floor(n.phase * 997) % cantaGeo.length, ty = J.torso ? J.torso[1] : 1;
+    const m = new THREE.Mesh(cantaGeo[k], cantaMat);
+    // hip grubu ölçeksiz (J.torso yalnız birleşik geometride): çanta ters ölçeklenmez, konum doğrudan gövde derinliğine göre verilir.
+    // Yolcunun kendi L.bag çantası sırtta durur (?stil'de arka yüzü ≈ .30, normalde ≈ .26): bizimki onun dışında kalır.
+    m.position.set(0, .32 * ty, STIL ? (b.look.bag ? .42 : .29) : (b.look.bag ? .35 : .24));
+    b.hip.add(m); b.canta = m;
+  },
+  npcCiz(n, b, dt, now) {
+    if (!cantaListe(n) || !b.canta) return;
+    b.canta.visible = n.fade >= .5; // kamerayla oyuncu arasında kalıp saydamlaşan yolcunun çantası görüşü kapatmasın
+    if (n.cF === undefined || G.state === "fallen") return;
+    const wk = n.cF === 1 ? Math.min(1, (CANTA_UYARI - n.cT) / .25) : 0; // uyarı: omuz üstünden bakar, çanta tedirgin sallanır
+    if (wk > 0) { b.head.rotation.y = (n.cS || 1) * CANTA_BAKIS * wk; b.canta.rotation.z = Math.sin(now * 14) * .06 * wk; }
+    else if (b.canta.rotation.z) b.canta.rotation.z = 0;
+    if (n.cA > 0) b.body.rotation.y += (n.cS || 1) * n.cA;
+  },
+});
+// <<< BÖLGE teh-canta
+
+// >>> BÖLGE teh-yemek
+// Sıcak yemek poşeti: poşetli yolcuya çarparsan ya da yanından sıkışıp geçersen üstüne yapışır.
+// Uyarı: yaklaşınca balon çıkar ve poşet sallanır (YM_ONCE sn); çarpışma yine yalnız gerçek temasta olur.
+// Yolcu alanları (JSON): ymA uyarı kuruldu, ymW uyarı kalan süre, ymU üzgün kalan süre, ymS "Pidem!" gecikmesi.
+const YM_ID = "teh-yemek";
+const YM_OLASILIK = .35, YM_ADET = [1, 1];
+const YM_UYARI_R = 1.15, YM_YENI_R = 1.9; // oyuncu bu kadar yaklaşınca uyarır; bu kadar uzaklaşınca yeniden kurulur
+const YM_ONCE = .9;                       // uyarı süresi (sn)
+const YM_ARA = 6, YM_LEKE = .3;           // iki leke arası en az (sn), leke miktarı
+const YM_UZGUN = 2.2, YM_SOZ = .12;       // üzülme süresi, "Pidem!" balonunun gecikmesi (kızma balonunu ezsin)
+const YM_BUHAR_SAYI = 3, YM_BUHAR_HIZ = .5, YM_BUHAR_BOY = .3; // buğu: adet, yükselme hızı (tur/sn), yükseklik (m)
+const YM_KOL = [.5, .8];                  // poşet tutan kolun omuz ve dirsek açısı
+// Paylaşımlı geometri ve malzeme: yolcu mesh'i yok edilirken dispose edilmez, bölge yaşadıkça kalır.
+const ymPosetG = new THREE.BoxGeometry(.15, .19, .1), ymSeritG = new THREE.BoxGeometry(.154, .04, .104), ymSapG = new THREE.BoxGeometry(.012, .1, .012);
+const ymBuharG = new THREE.SphereGeometry(1, 8, 6);
+const ymPosetM = new THREE.MeshLambertMaterial({ color: 0xece6d6 }), ymSeritM = new THREE.MeshLambertMaterial({ color: 0xd2402a });
+const ymBuharM = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: .45, depthWrite: false });
+
+const ymD = () => G.ortak.ym || (G.ortak.ym = { saat: 0, son: -99 }); // saat dert/yol sayacından bağımsız (G.t her yolda sıfırlanır)
+// Poşeti dirseğe takar (bardak elin ucunda durur: aynı konum). Yolcu başına bir kez.
+function ymTak(b) {
+  if (b.yemek) return;
+  const g = new THREE.Group();
+  g.position.y = J.cupY - J.elbowY; g.scale.setScalar(J.cupS / 1.6);
+  const gov = new THREE.Mesh(ymPosetG, ymPosetM); gov.position.y = -.115;
+  const ser = new THREE.Mesh(ymSeritG, ymSeritM); ser.position.y = -.1;
+  g.add(gov, ser);
+  for (const s of [-1, 1]) { const h = new THREE.Mesh(ymSapG, ymSeritM); h.position.set(s * .035, -.01, 0); h.rotation.z = -s * .35; g.add(h); }
+  const bur = [];
+  for (let k = 0; k < YM_BUHAR_SAYI; k++) { const m = new THREE.Mesh(ymBuharG, ymBuharM); g.add(m); bur.push(m); }
+  g.userData.bur = bur;
+  b.elbows[1].add(g); b.yemek = g;
+}
+function ymLeke(n) {
+  const d = ymD();
+  if (d.saat - d.son < YM_ARA) return;
+  d.son = d.saat;
+  ustKir("leke", YM_LEKE);
+  flash("YEMEK ÜSTÜNE YAPIŞTI!", C.danger, 1100);
+  tone(300, .14, "sine", .08); tone(220, .18, "sine", .07, .1);
+  n.ymU = YM_UZGUN; n.ymS = YM_SOZ; n.ymW = 0;
+}
+
+MODS.push({
+  id: YM_ID, teh: { olasilik: YM_OLASILIK, adet: YM_ADET },
+  olay(tip, v) {
+    if ((tip === "carpma" || tip === "sikisma") && v && v.n && v.n.teh === YM_ID) {
+      const y = G.ortak.yuk;
+      if (y && y.serbest) return; // kaçmış bavulun çarpması oyuncunun çarpması değil
+      ymLeke(v.n);
+    }
+  },
+  adim(dt) {
+    const d = ymD(); d.saat += dt;
+    for (const n of G.npcs) {
+      if (n.teh !== YM_ID) continue;
+      if (n.ymU > 0) { n.ymU -= dt; if (n.mad) n.mad = null; } // üzülüyor, kızmıyor
+      if (n.ymS > 0 && (n.ymS -= dt) <= 0) say(n, "Pidem!", "warn", 1.8);
+      if (n.ymW > 0) n.ymW -= dt;
+      if (G.sitting >= 0) continue;
+      const mes = Math.hypot(n.x - G.pos[0], n.z - G.pos[1]);
+      if (n.ymA) { if (mes > YM_YENI_R) n.ymA = false; }
+      else if (mes < YM_UYARI_R && !(n.ymU > 0) && n.state !== "exit" && n.state !== "board") {
+        n.ymA = true; n.ymW = YM_ONCE;
+        say(n, "Dikkat sıcak!", "warn", YM_ONCE + .3);
+        tone(900, .06, "triangle", .05);
+      }
+    }
+  },
+  npcKur(n, b) { if (n.teh === YM_ID) ymTak(b); },
+  npcCiz(n, b, dt, now) {
+    if (n.teh !== YM_ID) { if (b.yemek) b.yemek.visible = false; return; }
+    if (!b.yemek) ymTak(b); // mesh, n.teh yazılmadan kurulmuş olabilir
+    const g = b.yemek, a = b.arms[1], e = b.elbows[1];
+    g.visible = !b.mats[0] || b.mats[0].opacity > .5; // kamerayla aradaysa yolcuyla birlikte kaybolur
+    const dus = G.state === "fallen" || n.wob;
+    let k = 0;
+    if (!dus) {
+      k = n.ymW > 0 ? Math.min(1, (YM_ONCE - n.ymW) / .25) : 0;
+      a.rotation.set(YM_KOL[0] + .6 * k, 0, .1); e.rotation.x = YM_KOL[1] + .3 * k;
+      if (n.ymU > 0) { // üzgün: kafa öne, bir el başında, poşet sarkık
+        const s = Math.max(0, Math.min(1, n.ymU / .3, (YM_UZGUN - n.ymU) / .2));
+        b.head.rotation.x += .38 * s; b.hip.rotation.x += .08 * s;
+        a.rotation.x = YM_KOL[0] * (1 - s) + .2 * s; e.rotation.x = YM_KOL[1] * (1 - s) + .4 * s;
+        const a0 = b.arms[0], e0 = b.elbows[0];
+        a0.rotation.x += (1.2 - a0.rotation.x) * s; a0.rotation.z += (-.3 - a0.rotation.z) * s; e0.rotation.x += (1.6 - e0.rotation.x) * s;
+      }
+    }
+    // Poşet kola göre değil dünyaya göre dik asılı kalır (bardağın yaptığı gibi); uyarıda öne arkaya sallanır.
+    g.rotation.x = -(a.rotation.x + e.rotation.x + b.hip.rotation.x);
+    g.rotation.z = -(a.rotation.z + b.hip.rotation.z) + Math.sin(now * 16) * .3 * k;
+    const bur = g.userData.bur;
+    for (let i = 0; i < bur.length; i++) {
+      const f = (now * YM_BUHAR_HIZ + i / bur.length) % 1, m = bur[i];
+      m.position.set((i - 1) * .025 + Math.sin(now * 3 + i * 2) * .02, -.02 + f * YM_BUHAR_BOY, .015 * i - .015);
+      m.scale.setScalar(.012 + .03 * Math.sin(Math.PI * f));
+    }
+  },
+});
+// <<< BÖLGE teh-yemek
+
+// >>> BÖLGE dert-ilk-bulusma
+// İlk buluşma: şık giyindin, en yoğun saatte biniyorsun. Sonuç üst başa ve gecikmeye bağlı; iyi biten buluşma bir sonraki aşamayı açar.
+const IB_HAT = 0, IB_SEG = 3, IB_KALABALIK = 5, IB_SURE = 125, IB_SURE_ADIM = 8, IB_MAX_ASAMA = 2;
+const IB_AD = ["İlk buluşma", "İkinci buluşma", "Ailesiyle tanışma"];
+const IB_GIRIS = [
+  "Çok şıksın ve en yoğun saatte biniyorsun; karşındaki seni bekliyor.",
+  "İkinci buluşma: bu sefer de kusursuz görünmen gerek.",
+  "Ailesiyle tanışıyorsun; her şey tertemiz olmalı.",
+];
+const IB_GIY = { top: 0xf6f3ec, coat: 0xd8cfbf, pants: 0x2e3446, shoes: 0x2a2523 }; // açık gömlek, bej ceket: leke ve kırışıklık belli olsun
+// Dört kademe: puan eşikleri (üst baş puanı eksi gecikme cezası), yüz ve tek cümle. İlk iki kademe iyi bitiştir.
+const IB_ESIK = [.8, .55, .3], IB_IYI_KADEME = 1;
+const IB_GEC_CEZA = .015, IB_GEC_TAVAN = .45, IB_KACIRDI_TAVAN = .2; // geç kalınan her saniye puan düşürür; durağı kaçırmak tek başına kötü bitirir
+const IB_PUAN_SATIR = .7, IB_LEKE_SATIR = .2;
+const IB_YUZ = [
+  ["😍", "Karşındakinin gözleri parladı."],
+  ["🙂", "Karşındaki gülümsedi, küçük kusurları görmedi."],
+  ["😬", "Karşındaki nazikçe gülümsedi ama saatine baktı."],
+  ["😒", "Karşındaki seni baştan aşağı süzdü ve yüzünü buruşturdu."],
+];
+const IB_IYI = [
+  "Kapıda seni görünce gülümsedi; akşam güzel geçecek.",
+  "Seni görünce sevindi; ikinci buluşma da güzel başladı.",
+  "Annesi elini sıktı, babası çay koydu.",
+];
+const IB_KOTU = "Bu akşam başka biriyle buluşmaya gidiyorsun.";
+
+// Aşama kaydın iyi sayısından gelir; yol sürerken G.ds.as değişmez (yoksa sonuçta ad kayardı).
+const ibAsama = () => (G.dert === "ilk-bulusma" && G.ds && G.ds.as != null ? G.ds.as : Math.min(IB_MAX_ASAMA, dertKayit("ilk-bulusma").iyi));
+
+DERTLER["ilk-bulusma"] = {
+  get ad() { return IB_AD[ibAsama()]; },
+  get giris() { return IB_GIRIS[ibAsama()]; },
+  get basla() { return { hat: IB_HAT, seg: IB_SEG, kalabalik: IB_KALABALIK + ibAsama() }; },
+  hedef: "Altunizade",
+  get sure() { return IB_SURE - IB_SURE_ADIM * ibAsama(); },
+  hat(ilk) {
+    if (!ilk) return; // aktarma yok; yeni araçta durum sürer
+    G.ds.as = ibAsama();
+    oyuncuGiy(IB_GIY);
+    ustOto(true);
+    tehlikeIste("teh-kahve");
+  },
+  sonuc(bilgi) {
+    const a = ibAsama(), puan = ustPuan(), gec = Math.max(0, Math.round(bilgi.saat - this.sure)), u = G.ortak.ust;
+    let s = puan - Math.min(IB_GEC_TAVAN, gec * IB_GEC_CEZA);
+    if (bilgi.kacirdi) s = Math.min(s, IB_KACIRDI_TAVAN);
+    let k = IB_ESIK.findIndex((e) => s >= e); if (k < 0) k = IB_ESIK.length;
+    const iyi = k <= IB_IYI_KADEME, [yuz, cumle] = IB_YUZ[k];
+    return {
+      iyi, baslik: `${yuz} ${cumle}`, yazi: iyi ? IB_IYI[a] : IB_KOTU,
+      satirlar: [
+        [puan >= IB_PUAN_SATIR, "Üstün başın derli toplu kaldı"],
+        [!u || u.leke < IB_LEKE_SATIR, "Üstüne leke bulaşmadı"],
+        [gec === 0, gec ? `${gec} sn geç kaldın` : "Zamanında geldin"],
+        [!bilgi.kacirdi, bilgi.kacirdi ? "Durağı kaçırdın" : "Doğru durakta indin"],
+      ],
+    };
+  },
+};
+// <<< BÖLGE dert-ilk-bulusma
+
+// >>> BÖLGE dert-is-gorusmesi
+// İş görüşmesi: koyu takım, elde dosya, bileğinde tek bir saat. Kalan süre saatin ibresinde ve renginde görünür (gösterge yok).
+// Hedefte inince asansöre koşulur; sonuç: dosya hâlâ elde mi, asansöre yetişildi mi. Sayılar geçici.
+const ISG_SURE = 115;               // toplam süre (sn)
+const ISG_KOS = [8, 16], ISG_KOS_EK = 11; // koşu süresi: clamp(sure - saat + ek, alt, üst); 18,6 m / 3 m/sn = 6,2 sn alt sınırın altında kalmalı
+const ISG_UYARI = 30;               // kalan süre bu kadarken saat uyarır (sn)
+const ISG_GIY = { top: 0xf2f1ec, coat: 0x1d2232, pants: 0x1d2232, shoes: 0x16161a }; // beyaz gömlek, koyu takım, siyah ayakkabı
+const ISG_SAAT_Y = STIL ? -.17 : -.21, ISG_SAAT_R = STIL ? .05 : .037; // sol ön kolda bilek yeri (dirsek yerelinde) ve kol yarıçapı
+const ISG_YUZ = [0xf3efe0, 0xf2b84a, 0xd23c3c]; // saat yüzü: rahat, 30 sn kala, geç
+
+// Saat: sol ön kola takılı, tek bir kez yaratılır. Kayış kolu sarar, yüz dışa (-x) bakar, ibre kalan süreyi gösterir.
+const isgYuzM = new THREE.MeshLambertMaterial({ color: ISG_YUZ[0] });
+const isgSaatG = new THREE.Group(), isgIbre = new THREE.Group();
+{
+  const r = ISG_SAAT_R, kayis = new THREE.Mesh(new THREE.CylinderGeometry(r + .006, r + .006, .03, 14), M(0x2a2118));
+  const yuz = new THREE.Mesh(new THREE.CylinderGeometry(r * .95, r * .95, .016, 18), isgYuzM);
+  yuz.rotation.z = Math.PI / 2; yuz.position.x = -(r + .008);
+  const cerceve = new THREE.Mesh(new THREE.TorusGeometry(r * .95, .005, 6, 18), M(0xc9a64a));
+  cerceve.rotation.y = Math.PI / 2; cerceve.position.x = -(r + .016);
+  const ibre = new THREE.Mesh(new THREE.BoxGeometry(.005, r * 1.5, .007), M(0x1a1a1a)); ibre.position.y = r * .75 * .9;
+  isgIbre.add(ibre); isgIbre.position.x = -(r + .018);
+  isgSaatG.add(kayis, yuz, cerceve, isgIbre); isgSaatG.position.y = ISG_SAAT_Y; isgSaatG.visible = false;
+}
+function isgTakkil() { if (isgSaatG.parent !== player.elbows[0]) player.elbows[0].add(isgSaatG); } // oyuncuKur sonrası da güvenli
+
+// Görseller her zaman çalışan modülde: dert seçili değilken (menüye dönüş, başka dert) saat gizli kalmalı.
+MODS.push({
+  id: "isg-gorsel",
+  sifirla() { isgSaatG.visible = false; },
+  oyuncuKur() { isgTakkil(); },
+  ciz(dt, now) {
+    const d = G.dert === "is-gorusmesi" && G.ds;
+    isgSaatG.visible = !!d;
+    if (!d) return;
+    isgTakkil();
+    const t = ISG_SURE - G.ds.saat, geç = t < 0;
+    isgIbre.rotation.x = geç ? 0 : -(t / ISG_SURE) * Math.PI * 2; // dolu daire: tüm süre; ibre saat yönünün tersine azalır
+    isgYuzM.color.setHex(geç ? (Math.sin(now * 10) > 0 ? ISG_YUZ[2] : ISG_YUZ[0]) : t < ISG_UYARI ? ISG_YUZ[1] : ISG_YUZ[0]);
+  },
+});
+
+DERTLER["is-gorusmesi"] = {
+  ad: "İş görüşmesi", giris: "Takım elbisen ütülü, dosyan elinde; görüşme birazdan başlıyor.",
+  basla: { hat: 0, seg: 3 }, hedef: "Altunizade", sure: ISG_SURE,
+  hat(ilk) {
+    if (!ilk) return;
+    oyuncuGiy(ISG_GIY);
+    esyaVer("dosya", "Dosya");
+  },
+  durum() { return esyaElde() ? "Dosya elinde" : esyaVar() ? "Dosya yerde!" : "Dosya yok"; },
+  adim() { // süre uyarıları: bir kez, G.ds düz bayraklarıyla
+    const d = G.ds; if (!d) return;
+    const t = ISG_SURE - d.saat;
+    if (!d.isUyari && t < ISG_UYARI) { d.isUyari = true; flash(`Görüşmeye ${ISG_UYARI} saniye!`, C.danger, 1400); beep(880, .08); }
+    if (!d.isGec && t < 0) { d.isGec = true; flash("GEÇ KALDIN!", C.danger, 1600); tone(160, .3, "sawtooth", .08); }
+  },
+  peron() { // koşu başladığında dosya elde değilse bir kez söyle (araç dosyayla gider)
+    const d = G.ds; if (!d || d.isDosya || !G.pl || !G.pl.final) return;
+    d.isDosya = true;
+    if (!esyaElde()) flash("DOSYAN İÇERİDE KALDI!", C.danger, 1600);
+  },
+  varis() {
+    const sure = Math.max(ISG_KOS[0], Math.min(ISG_KOS[1], ISG_SURE - G.ds.saat + ISG_KOS_EK));
+    return { kos: { sure, yazi: "Asansöre yetiş" } };
+  },
+  sonuc(b) {
+    const dosya = esyaElde(), yet = !!b.yetisti && !b.kacirdi, iyi = dosya && yet;
+    let baslik, yazi;
+    if (b.kacirdi) { baslik = "Durağı kaçırdın"; yazi = "Altunizade geride kaldı; görüşme saatinde hâlâ vagondasın."; }
+    else if (iyi) { baslik = "Görüşmeye girdin"; yazi = "Asansör kapanmadan içeri attın kendini, dosyan elinde; kat düğmesine basarken nefesin bile düzeldi."; }
+    else if (yet) { baslik = "Elin boş girdin"; yazi = "Asansöre yetiştin ama dosya vagonda kaldı; özgeçmişini ezbere anlatman gerekecek."; }
+    else if (dosya) { baslik = "Asansör gitti"; yazi = "Dosyan elinde ama kapılar yüzüne kapandı; resepsiyondaki kadın geç kaldığını not etti."; }
+    else { baslik = "Hem geç hem eli boş"; yazi = "Asansör gitti, dosya da yok; resepsiyondaki kadın acıyarak baktı."; }
+    return { iyi, baslik, yazi, satirlar: [[dosya, dosya ? "Dosya hâlâ elinde" : "Dosyayı düşürdün"], [yet, yet ? "Asansöre yetiştin" : "Asansöre yetişemedin"]] };
+  },
+};
+// <<< BÖLGE dert-is-gorusmesi
+
+// >>> BÖLGE dert-sinav
+// Geç kalınan sınav: uyuyakaldın, kimlik elinde; Altunizade'de Söğütlüçeşme yönüne aktar, Acıbadem'de in, salon kapısına koş.
+// Kimlik ortak-esya sistemindedir (düşer, yerden alınır); bu bölge yalnız kuralı, peron hatırlatmasını ve sonucu yazar.
+const SINAV_SURE = 120;           // sn (çip)
+const SINAV_KAPI = .6;            // kapı açık kalma/peron bekleme çarpanı (ara duraklar kısa)
+const SINAV_KOS = [8, 16, 11];    // salon koşusu: en az, en çok, saatten artan pay (sn)
+const SINAV_DOGRU_HAT = 1;        // LINES indeksi: Altunizade → Söğütlüçeşme
+const SINAV_AKTARMA = "Altunizade";   // aktarma peronu (startPlatform name: curSeg().to)
+const SINAV_PERON_ISARET = "Söğütlüçeşme yönüne binmelisin";
+
+DERTLER["sinav"] = {
+  ad: "Geç kalınan sınav", giris: "Uyuyakaldın. Kimliğin elinde, sınav başlamak üzere.",
+  basla: { hat: 0, seg: 4 }, hedef: "Acıbadem", sure: SINAV_SURE,
+  hat(ilk) { if (ilk) esyaVer("kimlik", "Kimlik"); }, // aktarmada (ilk false) eldeki kimlik korunur
+  mod(m) { m.kapi *= SINAV_KAPI; },
+  durum() {
+    if (!esyaVar()) return "Kimlik yok";
+    if (!esyaElde()) return "Kimlik yerde!";
+    const ds = G.ds || {};
+    if (G.state === "platform") {
+      if (G.pl && G.pl.final) return "Salona koş";
+      if (ds.kacirdi) return "Acıbadem geçti";
+      if (G.pl && G.pl.name === SINAV_AKTARMA) return "Söğütlüçeşme yönüne bin";
+      return ds.yanlis ? "Yanlış araç" : "Altunizade'de aktar";
+    }
+    if (ds.kacirdi) return "Acıbadem geçti";
+    if (G.line === SINAV_DOGRU_HAT) return "Acıbadem'de in";
+    return ds.yanlis ? "Yanlış araç" : "Altunizade'de aktar";
+  },
+  // Altunizade peronunda LED: hangi araca binileceği (gelen araç doğru yöne gitmiyorsa uyarı). Kapı seçilince çekirdeğin yazısı kalır.
+  peron() {
+    const pl = G.pl; if (!pl) return;
+    if (G.ds) G.ds.sAlt = pl.name === SINAV_AKTARMA; // boardBus G.pl'yi sıfırlar; "bindi" bu bayrağa bakar
+    if (pl.name !== SINAV_AKTARMA || pl.final || pl.door !== null) return;
+    let y = null, yanip = false;
+    if (pl.bus === "open0") y = SINAV_PERON_ISARET;
+    else if (pl.bus === "away" || pl.bus === "arriving" || pl.bus === "open") {
+      const dogru = svcOf(pl).line === SINAV_DOGRU_HAT;
+      y = `${svcName(pl)} · ${dogru ? (pl.bus === "open" ? "doğru araç, bin!" : "doğru araç geliyor") : "Söğütlüçeşme'ye gitmiyor"}`;
+      yanip = dogru && pl.bus === "open";
+    }
+    if (y && $("led").textContent !== y) setLed(y, yanip);
+  },
+  olay(tip) {
+    // Yanlış hatta binersen bir kez uyar; araç yine de yürür (sapma hat sonuna kadar uzar).
+    if (tip !== "bindi" || !G.ds) return;
+    const alt = !!G.ds.sAlt; G.ds.sAlt = false;
+    if (!alt || G.state !== "ride") return; // uyarı yalnız Altunizade'den biniste
+    if (G.line !== SINAV_DOGRU_HAT) { G.ds.yanlis = true; flash("Bu araç Acıbadem'e gitmiyor!", C.danger, 1800); }
+    else G.ds.yanlis = false;
+  },
+  varis() {
+    const s = Math.max(SINAV_KOS[0], Math.min(SINAV_KOS[1], SINAV_SURE - G.ds.saat + SINAV_KOS[2]));
+    return { kos: { sure: s, yazi: "Salon kapısı" } };
+  },
+  sonuc(b) {
+    const kimlik = esyaElde(), yetisti = !!b.yetisti, kacirdi = !!b.kacirdi, iyi = kimlik && yetisti;
+    let baslik, yazi;
+    if (kacirdi) { baslik = "Acıbadem geçti gitti"; yazi = "Gözünü açtığında durak arkada kalmıştı; sınav sensiz başladı."; }
+    else if (!yetisti) { baslik = "Salon kapısı kapandı"; yazi = "Koştun ama gözetmen kapıyı tam önünde kapattı."; }
+    else if (!kimlik) { baslik = "Kimliksiz kaldın"; yazi = "Salona girdin, gözetmen kimlik istedi; kimlik trende kalmıştı."; }
+    else { baslik = "Sınava girdin"; yazi = "Kapı kapanırken oturdun, kimliğini masaya koydun."; }
+    return { iyi, baslik, yazi, satirlar: [[kimlik, kimlik ? "Kimlik yanında" : "Kimliği kaybettin"], [!kacirdi, kacirdi ? "Acıbadem'i kaçırdın" : "Acıbadem'de indin"], [yetisti, yetisti ? "Kapı kapanmadan girdin" : "Kapı kapanmadan giremedin"]] };
+  },
+};
+// <<< BÖLGE dert-sinav
+
+// >>> BÖLGE dert-babaanne
+// Babaanneyi hastaneye götür: yoldaş (ortak-yoldas) yavaş yürüyen bir babaanne. İlk durakta bir koltuk boşalır ve işaretlenir; oyuncu babaanneyi
+// koltuğun önüne getirir, o oturur. Ayakta kalırsa sert sarsıntıda sendeler (oyuncu tutar). Hedef anons edilince koltuktan kaldırılır, birlikte inilir.
+// Durum G.ds altında (yalnız sayaç ve bayrak, yolcu referansı yok); koltuk bilgisi seatOcc'ta, konumlar yolcu nesnesindedir.
+const BABA_HEDEF = "Okmeydanı Hastane", BABA_HIZ = .45;                 // inilecek durak; babaannenin yürüme hızı (m/sn)
+const BABA_OTUR_MESAFE = 1, BABA_KALK_MESAFE = .9;                      // koltuğun önüne bu kadar yaklaşınca oturmaya gider; oyuncu koltuğun önüne bu kadar gelirse hedefte kalkar
+const BABA_RAKIP_SN = 7, BABA_RAKIP_HIZ = .8, BABA_RAKIP_MENZIL = 4.5;  // koltuk boşaldıktan bu kadar sonra yakındaki biri yönelir (hız, en çok bu kadar uzaktan)
+const BABA_SARS_ESIK = 5, BABA_SARS_ARA = 6, BABA_SARS_IYI = 1;         // sendeletecek en küçük sarsıntı (s zaten .8 ile çarpılmış gelir); iki sendeleme arası en az sn; iyi sonuçta en çok sarsılma
+const BABA_KAPI = 1.4;                                                  // yavaş yoldaş için kapıların açık kalma süresi çarpanı
+const BABA_BASORTU = [0x3a3a40, 0xdcd8d2, 0x4a4f5e, 0x6e5a7a];
+
+// Dert durumu ilk kullanımda kurulur (G.ds, dertAyarla'da yalın {saat: 0} olarak yaratılır).
+function babaDs() {
+  const d = G.ds;
+  if (d && d.sarsildi === undefined) Object.assign(d, { oturdu: false, sarsildi: 0, tuttu: 0, kapildi: 0, koltuk: -1, sonKoltuk: -1, kBos: false, bosS: 0, rakip: false, wobAktif: false, wobSon: 0, sarsAt: -99 });
+  return d;
+}
+const babaHedefte = () => { const s = curSeg(); return !!s && s.to === BABA_HEDEF; };
+function babaLook() { return { ...randomLook(true), f: true, beard: false, hair: "scarf", scarfC: pick(BABA_BASORTU), skirt: true, cane: true, bag: false }; }
+
+// Oyuncunun önünde bir koltuk boşaltır ve işaretler. sessiz: koltuktaki hemen kalkar (kapı olmayan yolda, ?aktarma).
+function babaKoltukAc(ds, sessiz) {
+  if (ds.oturdu || ds.koltuk >= 0 || yoldasKoltuk() >= 0 || !yoldasNpc()) return;
+  const i = pickSeat(); if (i < 0) return;
+  ds.koltuk = i; ds.sonKoltuk = i; ds.bosS = 0; ds.rakip = false; ds.kBos = !G.seatOcc[i];
+  if (G.seatOcc[i]) {
+    if (sessiz) { G.seatOcc[i] = null; G.seatsDirty = true; ds.kBos = true; }
+    else seatedLeaves(i, G.doorSide);
+  }
+  G.isaretKoltuk = i;
+  flash("Babaanne için bir koltuk boşalıyor", C.sign, 1800);
+}
+// Koltuk boşaldı ama babaanne oturamadı: yakındaki ayakta bir yolcu koltuğa yönelir.
+function babaRakip(ds) {
+  const f = seatFront(ds.koltuk);
+  const r = G.npcs.filter((n) => n.state === "stand" && !n.elder && !n.yoldas && !n.teh && !n.rival && !n.dozer && !n.mad && !n.wob && !n.act && !n.exitSide && n.alightAt !== G.seg
+    && Math.hypot(n.x - f[0], n.z - f[1]) < BABA_RAKIP_MENZIL).sort((a, b) => Math.hypot(a.x - f[0], a.z - f[1]) - Math.hypot(b.x - f[0], b.z - f[1]))[0];
+  if (!r) { ds.bosS = BABA_RAKIP_SN - 2; return; } // yakında kimse yok: iki sn sonra yine bakar
+  ds.rakip = true;
+  Object.assign(r, { toSeat: ds.koltuk, goal: [...f], state: "walk", speed: BABA_RAKIP_HIZ, stuck: 0, slowT: 0, wait: 0, via: false, path: [] });
+  say(r, "Boş mu burası?", "talk", 1.6);
+}
+// Sert sarsıntıda ayaktaki babaanne sendeler; sonucu adim'de izlenir (tutuldu mu, tutulmadı mı).
+function babaSars(ds, v) {
+  if (v.s < BABA_SARS_ESIK || G.state !== "ride" || ds.saat - ds.sarsAt < BABA_SARS_ARA) return;
+  const n = yoldasNpc(); if (!n || n.wob || n.state !== "stand" || n.toSeat >= 0 || n.fallT !== undefined) return; // yalnız ayakta duran sendeler (çekirdekle aynı)
+  if (!startWob(n, v.v)) return;
+  ds.sarsAt = ds.saat; ds.wobAktif = true; ds.wobSon = 0;
+}
+function babaKalk() {
+  if (!yoldasKalk()) return false;
+  G.isaretKoltuk = -1; flash("Babaanne kalkıyor", C.safe, 1200); tone(520, .06, "triangle", .08);
+  return true;
+}
+
+DERTLER["babaanne"] = {
+  ad: "Babaanneyi hastaneye götür",
+  giris: "Babaannenle hastaneye gidiyorsun: ona yer bul, sarsılmasın, birlikte in.",
+  basla: { hat: 5, seg: 0 },
+  hedef: BABA_HEDEF,
+  durum() {
+    const ds = babaDs(); if (!ds) return "";
+    let y = yoldasKoltuk() >= 0 ? "oturuyor" : ds.koltuk >= 0 ? (ds.kBos ? "koltuk boş" : "koltuk açılıyor") : "ayakta";
+    if (ds.sarsildi) y += ` · ${ds.sarsildi} sarsıntı`;
+    return y;
+  },
+
+  hat(ilk) {
+    const ds = babaDs(); if (!ds) return;
+    if (ilk) yoldasVer({ tip: "babaanne", ad: "Babaanne", elder: true, hiz: BABA_HIZ, look: babaLook() });
+    else Object.assign(ds, { koltuk: -1, sonKoltuk: -1, kBos: false, bosS: 0, rakip: false, wobAktif: false }); // aktarma: yeni araçta koltuklar baştan
+    G.isaretKoltuk = -1;
+  },
+  // Yol başı: sendeleme izi sıfırlanır (startSeg sendelemeyi siler). Geri yüklemede koltuk durumu seatOcc'tan yeniden türetilir.
+  yol(geri) {
+    const ds = babaDs(); if (!ds) return;
+    ds.wobAktif = false;
+    if (!geri) { // ?aktarma: kapısız tek yolda koltuk başta sessizce boşalır
+      if (QUICK && curSeg().mine) babaKoltukAc(ds, true);
+      return;
+    }
+    const k = yoldasKoltuk(), s = ds.sonKoltuk;
+    ds.oturdu = k >= 0; ds.kBos = false; ds.bosS = 0; ds.rakip = false; ds.koltuk = -1; G.isaretKoltuk = -1;
+    if (k < 0 && s >= 0 && !G.seatOcc[s]) { ds.koltuk = s; ds.kBos = true; G.isaretKoltuk = s; }
+  },
+  mod(m) { m.kapi *= BABA_KAPI; },
+  adim(dt, h) {
+    const ds = babaDs(), y = G.ortak.yoldas; if (!ds || !y || y.peron) return;
+    const n = yoldasNpc(), k = yoldasKoltuk();
+    // Sendeleme bitti mi: tutulduysa tuttu, tutulmadan toparlandıysa sarsıldı (yol değişince yarıda kalan sayılmaz).
+    if (ds.wobAktif) {
+      if (n && n.wob) ds.wobSon = n.wob.end;
+      else {
+        ds.wobAktif = false;
+        if (ds.wobSon < 0) { ds.sarsildi++; flash("BABAANNE SARSILDI!", C.danger, 1000); tone(200, .12, "sawtooth", .07); }
+        else if (ds.wobSon > 0) ds.tuttu++;
+      }
+    }
+    if (k >= 0) { // oturuyor
+      if (ds.koltuk >= 0) { ds.oturdu = true; ds.koltuk = -1; ds.kBos = false; G.isaretKoltuk = -1; flash("BABAANNE OTURDU", C.safe, 1500); beep(660, .08); }
+      if (babaHedefte() && (G.announced || G.state === "doors")) { // hedef: koltuğu işaretle; önüne gelirsen kalkar
+        G.isaretKoltuk = k;
+        const f = seatFront(k);
+        if (G.sitting < 0 && Math.hypot(G.pos[0] - f[0], G.pos[1] - f[1]) < BABA_KALK_MESAFE) babaKalk();
+      }
+      return;
+    }
+    if (ds.koltuk >= 0 && babaHedefte() && (G.announced || G.state === "doors")) { // hedef anons edildi: boş koltuk artık aranmaz
+      ds.koltuk = -1; ds.kBos = false; ds.rakip = false; G.isaretKoltuk = -1;
+    }
+    if (ds.koltuk < 0) return;
+    const o = G.seatOcc[ds.koltuk], f = seatFront(ds.koltuk);
+    if (!o) {
+      ds.kBos = true; ds.bosS += h;
+      if (n && n.toSeat < 0 && !n.wob && n.fallT === undefined && Math.hypot(n.x - f[0], n.z - f[1]) <= BABA_OTUR_MESAFE) yoldasOtur(ds.koltuk);
+      if (ds.rakip && !G.npcs.some((q) => q.toSeat === ds.koltuk && !q.yoldas)) { ds.rakip = false; ds.bosS = 0; } // yönelen vazgeçtiyse süre yeniden işler
+      else if (!ds.rakip && ds.bosS >= BABA_RAKIP_SN) babaRakip(ds);
+    } else if (ds.kBos && o !== "player" && !o.yoldas) { // başkası oturdu: sonraki durakta yeni koltuk boşalır
+      ds.kapildi++; ds.koltuk = -1; ds.kBos = false; ds.rakip = false; G.isaretKoltuk = -1;
+      flash("KOLTUK KAPILDI!", C.danger, 1400); tone(200, .1, "square", .08);
+    }
+  },
+  olay(tip, v) {
+    const ds = babaDs(); if (!ds || !G.ortak.yoldas) return;
+    if (tip === "kapi") { if (!curSeg().mine) babaKoltukAc(ds, false); } // ilk ara durakta koltuk boşalır
+    else if (tip === "anons") {
+      const k = babaHedefte() ? yoldasKoltuk() : -1;
+      if (k >= 0) { G.isaretKoltuk = k; flash("Babaanneye dokun: kalksın", C.sign, 2400); }
+    } else if (tip === "sarsinti") babaSars(ds, v);
+  },
+  // Hedefte oturan babaanneye dokunmak onu kaldırır. Sendeleyene dokunuş çekirdekte (tut) kalır, buradan geçer.
+  dokun(cx, cy) {
+    if (G.state !== "ride" && G.state !== "doors") return false;
+    const k = yoldasKoltuk();
+    if (k < 0 || !babaHedefte() || !(G.announced || G.state === "doors")) return false;
+    if (!tapOnNpc({ x: SEATS[k][0], z: SEATS[k][1] }, cx, cy)) return false;
+    babaKalk();
+    return true;
+  },
+
+  sonuc(b) {
+    const ds = babaDs() || {}, oturdu = !!ds.oturdu, sars = ds.sarsildi | 0, tuttu = ds.tuttu | 0, birlikte = !b.kacirdi;
+    const iyi = oturdu && birlikte && sars <= BABA_SARS_IYI;
+    const satirlar = [
+      [oturdu, oturdu ? "Babaanne oturdu" : "Babaanne hiç oturamadı"],
+      [sars <= BABA_SARS_IYI, sars ? `${sars} kez sarsıldı` : tuttu ? `Hiç sarsılmadı (${tuttu} kez tuttun)` : "Hiç sarsılmadı"],
+      [birlikte, birlikte ? "Birlikte indiniz" : "Durağı kaçırdınız"],
+    ];
+    if (iyi) return { iyi, baslik: "Hastanedesiniz", yazi: G.lineFalls ? "Sen kalkıp devam ettin, o oturdu." : "Sen ayakta kaldın, o oturdu.", satirlar };
+    if (!birlikte) return { iyi, baslik: "Durağı kaçırdınız", yazi: "Babaannenin randevusu geride kaldı.", satirlar };
+    if (!oturdu) return { iyi, baslik: "Babaanne ayakta geldi", yazi: "Yol boyunca oturacak yer bulamadı; dizleri sızladı.", satirlar };
+    return { iyi, baslik: "Babaanne yorgun", yazi: "Sallantıda defalarca sendeledi; hastaneye soluk soluğa girdi.", satirlar };
+  },
+};
+// <<< BÖLGE dert-babaanne
+
+// >>> BÖLGE dert-kutulu-raf
+// Kutulu raf: kolunun altında 1,5 m'lik kutuyla en kalabalık yoldan geç. Kutu ve çarpma hesabı ortak-yuk'ta; burada yalnız sayım, söz ve sonuç.
+const RAF_CARP_COK = 3, RAF_CARP_KABUL = 2;                  // "bütün vagon baktı" eşiği; iyi bitiş için en çok çarpma
+const RAF_SOZ = ["Yine mi!", "Şu rafı bırak artık!", "Dikkat et be!", "Kutuyla mı yaşıyorsun sen?"]; // tekrar çarpılana ek söz
+DERTLER["kutulu-raf"] = {
+  ad: "Kutulu raf", giris: "Eve yeni raf taşıyorsun; kutu senden uzun.",
+  basla: { hat: 1, seg: 1, kalabalik: 3 },
+  hedef: "Söğütlüçeşme",
+  hat(ilk) { if (ilk) yukVer("kutu", "Kutu"); }, // aktarma yok; yine de perondan yeni araçta yük yeniden kurulmasın
+  durum() { const k = G.ds ? G.ds.carp | 0 : 0; return k ? `${k} çarpma` : "kutu"; },
+  olay(tip, v) {
+    const d = G.ds; if (!d || tip !== "yuk-carpti") return;
+    d.carp = (d.carp | 0) + 1; dertCipGuncelle();
+    const n = v && v.n;
+    if (n && n.hits > 1 && n.rafH !== n.hits) { // anger balonu yazdı; tekrar çarpılana farklı söz
+      n.rafH = n.hits;
+      say(n, "\u{1F4A2} " + RAF_SOZ[(n.hits - 2) % RAF_SOZ.length], "mad", MAD_T);
+    }
+  },
+  sonuc(b) {
+    // Hedef son durak: kaçırma çekirdekte missed() ile biter, buraya ulaşmaz; sonuc yalnız hedefte inilince çağrılır.
+    const k = (G.ds && G.ds.carp) | 0;
+    const iyi = k <= RAF_CARP_KABUL;
+    const sahne = k === 0 ? "Kimse fark etmedi bile." : k < RAF_CARP_COK ? "Birkaç kişi dönüp baktı." : "Bütün vagon sana baktı.";
+    return {
+      iyi,
+      baslik: iyi ? "Raf eve girdi" : "Raf geldi ama vagon unutmaz",
+      yazi: sahne,
+      satirlar: [
+        [k === 0, k === 0 ? "Kimseye çarpmadın" : `${k} kez çarptın`],
+        [k <= RAF_CARP_KABUL, k <= RAF_CARP_KABUL ? "Vagon seni hoş gördü" : "Vagon seni unutmaz"],
+      ],
+    };
+  },
+};
+// <<< BÖLGE dert-kutulu-raf
+
+// >>> BÖLGE dert-dugun
+// Düğüne yetiş: topuklu ayakkabı (yavaş adım), dar kıyafet (geç toparlanma), elde hediye, üstün başın düzgün kalmalı.
+// Sayılar geçici.
+const DUGUN_SURE = 135;                    // saniye
+const DUGUN_YURU = .6, DUGUN_TOPARLA = .8; // mod çarpanları (araç içi ve peron adımı; peron koşusu da yavaşlar)
+const DUGUN_KOS_PAY = 16, DUGUN_KOS = [13, 22]; // koşu süresi: sure - saat + pay, bu aralığa sıkıştırılır (arka kapıdan: önce araçtan kapı hizasına yaklaşık 2,8 m, sonra işarete KOS_R düşülünce yaklaşık 17,8 m; toplam ~20,6 m / 1,8 m/sn = ~11,4 sn, 13 sn alt sınırda pay ~1,6 sn; bekleyenlerden kaçınma yolu uzatabilir)
+const DUGUN_UST_IYI = .7;                  // üst baş puanı bunun üstündeyse "derli toplu"
+const DUGUN_LOOK = { top: 0x7b1e3f, coat: null, pants: 0x20202c, shoes: 0x1a1216, w: .95 }; // dar şık kıyafet: bordo üst, koyu pantolon, montsuz
+const DUGUN_TOPUK_RENK = 0xb3122f;
+// Topuk: ayakkabının arkasında, tabanın biraz altına inen ince blok. Ölçüler [x, y, z boyutu], konum [y, z].
+const DUGUN_TOPUK = STIL ? { s: [.05, .08, .05], y: -.27, z: .1 } : { s: [.03, .075, .03], y: -.375, z: .085 };
+
+// Mesh'ler modül yüklenirken bir kez yaratılır; baldır grubuna (knees) takılır, oyuncuGiy yalnız ilk çocuğun geometrisini değiştirdiği için yerinde kalır.
+const dugunTopuk = [0, 1].map(() => {
+  const m = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), M(DUGUN_TOPUK_RENK));
+  m.scale.set(...DUGUN_TOPUK.s); m.position.set(0, DUGUN_TOPUK.y, DUGUN_TOPUK.z); m.visible = false; return m;
+});
+let dugunTopukAcik = false;
+function dugunTopukGoster(a) {
+  for (let i = 0; i < 2; i++) { if (a && dugunTopuk[i].parent !== player.knees[i]) player.knees[i].add(dugunTopuk[i]); dugunTopuk[i].visible = a; }
+  dugunTopukAcik = a;
+}
+// Topuk, başka dert seçilince de gizlenmeli; dert kancaları o zaman çalışmadığı için kancaları kendi MODS girdisi taşır.
+MODS.push({
+  id: "dert-dugun-topuk",
+  sifirla() { if (dugunTopukAcik) dugunTopukGoster(false); },
+  oyuncuKur() { if (dugunTopukAcik) dugunTopukGoster(true); }, // oyuncuGiy sonrası yeniden takılır
+  ciz() {
+    const a = G.dert === "dugun";
+    if (a !== dugunTopukAcik || (a && dugunTopuk[0].parent !== player.knees[0])) dugunTopukGoster(a);
+  },
+});
+
+DERTLER["dugun"] = {
+  ad: "Düğüne yetiş",
+  giris: "Topuklu ayakkabın, dar kıyafetin ve elindeki hediyeyle düğüne yetişmen gerek.",
+  basla: { hat: 0, seg: 3 },
+  hedef: "Altunizade",
+  sure: DUGUN_SURE,
+  durum() { return esyaElde() ? "hediye elinde" : esyaVar() ? "hediye yerde!" : "hediye yok"; },
+  mod(m) { m.yuru *= DUGUN_YURU; m.toparla *= DUGUN_TOPARLA; },
+  hat(ilk) {
+    if (!ilk) return; // aktarmada kıyafet, hediye ve üst baş olduğu gibi sürer
+    oyuncuGiy(DUGUN_LOOK);
+    esyaVer("hediye", "Hediye");
+    ustOto(true);
+  },
+  varis() {
+    const t = Math.min(DUGUN_KOS[1], Math.max(DUGUN_KOS[0], DUGUN_SURE - G.ds.saat + DUGUN_KOS_PAY));
+    return { kos: { sure: t, yazi: "Salona son anda gir" } };
+  },
+  sonuc(b) {
+    const hed = esyaElde(), ust = ustPuan(), derli = ust >= DUGUN_UST_IYI, yet = !!b.yetisti, iyi = yet && hed;
+    let baslik, yazi;
+    if (b.kacirdi) { baslik = "Durağı kaçırdın"; yazi = "Düğün sensiz başladı."; }
+    else if (!yet) { baslik = "Geç kaldın"; yazi = "Salona vardığında nikâh çoktan kıyılmıştı."; }
+    else if (!hed) { baslik = "Eli boş girdin"; yazi = "Salona son anda girdin ama hediyen yoktu."; }
+    else if (derli) { baslik = "Düğüne yetiştin"; yazi = "Salona son anda girdin; hediyen elinde, üstün başın düzgün."; }
+    else { baslik = "Düğüne yetiştin"; yazi = "Salona son anda girdin; hediyen elinde ama üstün başın dağınık."; }
+    return {
+      iyi, baslik, yazi,
+      satirlar: [
+        [hed, hed ? "Hediye elinde" : esyaVar() ? "Hediyeyi yerde bıraktın" : "Hediyeyi kaybettin"],
+        [derli, derli ? "Üstün başın derli toplu" : "Üstün başın dağıldı"],
+        [yet, yet ? `Salona yetiştin (${Math.ceil(b.kalan || 0)} sn kala)` : "Salona yetişemedin"],
+      ],
+    };
+  },
+};
+// <<< BÖLGE dert-dugun
+
+// >>> BÖLGE dert-bavul
+// Havalimanı bavulu: dev bavulla yoğun saatte biniş, Altunizade'de aktarma, Burhaniye'de inip yürüyen merdivene koşu.
+// Bavulun kendisi ortak-yuk'ta; bu bölge yalnız kurar, ipucu verir ve sonucu yazar. Yolcuya hiçbir şey takılmaz.
+const BAVUL_KOS_SURE = 13, BAVUL_IYI_CARPMA = 3;   // peron koşusu süresi (sn); iyi bitiş için en çok yolcu çarpması
+const BAVUL_AKTARMA = "Burhaniye için Zincirlikuyu yönüne bin";
+
+DERTLER["bavul"] = {
+  ad: "Havalimanı bavulu", giris: "Dev bavulla yoğun saatte biniyorsun; uçak seni beklemez.",
+  basla: { hat: 3, seg: 2, kalabalik: 4 }, hedef: "Burhaniye",
+  hat(ilk) { if (ilk) yukVer("bavul", "Bavul"); }, // aktarmada (ilk false) yük ve bavul zaten sürer
+  durum() { const y = G.ortak.yuk; return y && y.serbest ? "bavul kaçtı!" : ""; },
+  peron() { // Altunizade peronunda bir kez: hangi araca binileceği
+    if (!G.ds || G.ds.ipucu || G.pl.final || G.pl.name !== "Altunizade") return; // Acıbadem gibi ara duraklarda gösterme
+    G.ds.ipucu = true; flash(BAVUL_AKTARMA, C.sign, 2600);
+  },
+  varis() { return { kos: { sure: BAVUL_KOS_SURE, yazi: "Yürüyen merdivene yetiş" } }; },
+  sonuc(bilgi) {
+    const y = G.ortak.yuk, kacti = y ? y.kacti : 0, carpti = y ? y.carpti : 0, yetisti = !!bilgi.yetisti;
+    const satirlar = [
+      [kacti === 0, kacti ? `Bavul ${kacti} kez kaçtı` : "Bavul hiç kaçmadı"],
+      [carpti === 0, carpti ? `Kaçan bavul ${carpti} kez yolcuya çarptı` : "Bavul kimseye çarpmadı"],
+    ];
+    if (bilgi.kacirdi) {
+      satirlar.push([false, "Burhaniye'de inemedin"]);
+      return { iyi: false, baslik: "Durağı kaçırdın", yazi: "Bavulla kapıya yetişemedin; Burhaniye arkada kaldı.", satirlar };
+    }
+    satirlar.push([yetisti, yetisti ? "Yürüyen merdivene yetiştin" : "Yürüyen merdivene yetişemedin"]);
+    if (!yetisti) return { iyi: false, baslik: "Uçak kalktı", yazi: "Merdivenin dibine geldin, bavulun tekerleği peronda kaldı.", satirlar };
+    if (carpti > BAVUL_IYI_CARPMA) return { iyi: false, baslik: "Yetiştin ama", yazi: "Merdivene yetiştin; vagon bavulunu uzun süre unutmayacak.", satirlar };
+    return { iyi: true, baslik: "Uçağa yetiştin", yazi: "Bavul ayağının dibinde, merdiven önünde; kimse fark etmedi bile.", satirlar };
+  },
+};
+// <<< BÖLGE dert-bavul
+
+// >>> BÖLGE dert-son-sefer
+// Son sefer: gece, yorgunsun. Uyku ds.uyku'da (0..1) zamanla artar; dokunmak ve sarsıntı azaltır. Ekran kararır, göz kapanır, LED durak adı yazmaz.
+const SS_HEDEF = "Burhaniye", SS_BASLA = .2;     // başlangıç uykusu
+const SS_HIZ = .03, SS_OTUR = 2;                 // saniyede artış; otururken çarpan
+const SS_DOKUN = .2, SS_SARSINTI = .08;          // dokunuş ve sarsıntı uykuyu bu kadar azaltır
+const SS_GECE = .2, SS_ENCOK = .94;              // gecenin sabit koyuluğu; uyku en çok bu kadar karartır
+const SS_GOZ_ESIK = .7, SS_GOZ_KAPA = .99;       // göz kapanmaları bu uykudan sonra; kapanırken en çok koyuluk
+const SS_ANONS_ESIK = .6, SS_ANONS_SN = 1600;    // anonsu bu uykunun altında duyarsın; durak adı kaç ms görünür
+const SS_KOTU_UYKU = .85;                        // sonuçta "gözlerin kapandı" sayılan en yüksek uyku
+const SS_LED = "· · ·";
+const ssKarart = document.createElement("div"); // tam ekran siyah katman: HUD'un (z 2) altında, tuvalin üstünde
+ssKarart.style.cssText = "position:absolute;inset:0;z-index:1;background:#000;opacity:0;pointer-events:none";
+$("game").after(ssKarart);
+let ssOp = 0, ssBasEgik = false;
+function ssYaz(op) { if (op !== ssOp && (op === 0 || Math.abs(op - ssOp) > .004)) { ssOp = op; ssKarart.style.opacity = op; } }
+function ssAzalt(x) { const ds = G.ds; if (ds && ds.uyku !== undefined) ds.uyku = Math.max(0, ds.uyku - x); }
+const ssAktif = () => G.dert === "son-sefer" && !!G.ds && G.ds.uyku !== undefined && (G.state === "ride" || G.state === "doors");
+
+// Görsel yalnız bu dert seçiliyken çalışan kancalarla yönetilemez (menüye dönünce dert kancası gelmez); bu yüzden küçük bir ortak kanca.
+MODS.push({
+  id: "son-sefer-gorsel",
+  sifirla() { ssYaz(0); if (ssBasEgik) { player.head.rotation.x = 0; ssBasEgik = false; } },
+  ciz(dt, now) {
+    if (!ssAktif()) { ssYaz(0); if (ssBasEgik) { player.head.rotation.x = 0; ssBasEgik = false; } return; }
+    const ds = G.ds, u = ds.uyku;
+    let op = Math.min(SS_ENCOK, SS_GECE + (1 - SS_GECE) * u * u);
+    if (ds.gozK > 0) op = Math.max(op, Math.min(1, Math.sin(Math.PI * (1 - ds.gozK / ds.gozS)) * 1.6) * SS_GOZ_KAPA);
+    ssYaz(op);
+    // Baş düşer: ?stil'de softBody başı sıfırlayıp kendi hesaplar; orada yalnız gövde eğimi görünür.
+    if (G.state !== "fallen" && !G.pl) {
+      const nod = u > .35 ? (u - .35) * .8 * (.75 + .25 * Math.sin(now * 1.7)) : 0;
+      if (!STIL) { player.head.rotation.x = -nod; ssBasEgik = nod > 0 || ssBasEgik; }
+      player.hip.rotation.x -= .1 * u * (.75 + .25 * Math.sin(now * 1.7));
+    }
+  },
+});
+
+DERTLER["son-sefer"] = {
+  ad: "Son sefer", giris: `Gece, yorgunsun; ${SS_HEDEF}'de inmeyi sakın kaçırma.`,
+  basla: { hat: 0, seg: 2 }, hedef: SS_HEDEF,
+  durum() { return `${SS_HEDEF}'de in`; },
+  anonsSessiz() { return !!G.ds && G.ds.uyku >= SS_ANONS_ESIK; }, // uykuluyken çan da çalmaz
+  sifirla() { ssYaz(0); },
+  hat(ilk) {
+    if (!ilk || !G.ds) return;
+    Object.assign(G.ds, { uyku: SS_BASLA, uykuMax: SS_BASLA, gozK: 0, gozS: 1, gozBek: 4, gozSay: 0, dusme: 0 });
+  },
+  yol(restored) {
+    setLed(SS_LED); // duraktan çıkışta ve düşüp devam edince LED durak adı vermez
+    if (restored && G.ds) G.ds.gozK = 0;
+  },
+  adim(dt) {
+    const ds = G.ds; if (!ds || ds.uyku === undefined) return;
+    ds.uyku = Math.min(1, ds.uyku + dt * SS_HIZ * (G.sitting >= 0 ? SS_OTUR : 1)); // oturunca uyku iki kat hızlı
+    if (ds.uyku > ds.uykuMax) ds.uykuMax = ds.uyku;
+    if (ds.gozK > 0) ds.gozK = Math.max(0, ds.gozK - dt);
+    else if (ds.uyku > SS_GOZ_ESIK) {
+      ds.gozBek -= dt;
+      if (ds.gozBek <= 0) { // kısa göz kapanması: uyku arttıkça sık ve uzun
+        const k = ds.uyku - SS_GOZ_ESIK;
+        ds.gozS = ds.gozK = .5 + k * 2.5; ds.gozSay++;
+        ds.gozBek = Math.max(1.8, 5 - k * 10) + Math.random() * 1.2;
+      }
+    }
+  },
+  dokun() { if (G.state === "ride" || G.state === "doors") ssAzalt(SS_DOKUN); return false; }, // dokunuşu yutma
+  olay(tip) {
+    const ds = G.ds; if (!ds) return;
+    if (tip === "sarsinti") ssAzalt(SS_SARSINTI);
+    else if (tip === "dusme") ds.dusme = (ds.dusme || 0) + 1;
+    else if (tip === "anons") {
+      setLed(SS_LED, true);
+      if (ds.uyku < SS_ANONS_ESIK) { // uyanıksan anonsu duyarsın: durak adı kısa görünür
+        flash(curSeg().to, C.sign, SS_ANONS_SN); // çanı çekirdek zaten çalıyor
+      }
+    } else if (tip === "kapi") setLed(SS_LED, true);
+  },
+  sonuc(b) {
+    const ds = G.ds || {}, kac = !!b.kacirdi, goz = ds.gozSay || 0, dus = ds.dusme || 0;
+    return {
+      iyi: !kac,
+      baslik: kac ? "Hat sonu" : "Doğru durak",
+      yazi: kac ? `Gözünü açtığında ${SS_HEDEF} çoktan arkada kalmıştı; hat sonuna kadar gittin.`
+        : `Kapı açıldığında tam doğru yerdeydin; gece havası yüzüne çarptı.`,
+      satirlar: [
+        [!kac, kac ? `${SS_HEDEF}'yi kaçırdın` : `${SS_HEDEF}'de indin`],
+        [(ds.uykuMax || 0) < SS_KOTU_UYKU && goz === 0, goz ? `Gözlerin ${goz} kez kapandı` : (ds.uykuMax || 0) < SS_KOTU_UYKU ? "Gözlerin hiç kapanmadı" : "Gözlerin kapanmak üzereydi"],
+        [dus === 0, dus ? `${dus} kez düştün` : "Ayakta uyuklayıp düşmedin"],
+      ],
+    };
+  },
+};
+// <<< BÖLGE dert-son-sefer
+
+// >>> BÖLGE dert-turist
+// Turisti götür: valizli bir turist yol soruyor. Dört tür (her oyunda biri): dev valizli (yavaş), fotoğraf çeken (ara ara durur),
+// yanlış yöne yürüyen (peronda), teşekkür eden (kapıda 1,5 sn yolu kapatır). Yoldaşlık ortak-yoldas'ta; burada yalnız tür davranışı, görsel ve sonuç var.
+// Durum G.ds'te (yalnız sayı ve bayrak; yolcu nesnesi tutulmaz). Turist başta bekler: dokunup çağırmak gerekir.
+const TUR_LISTE = ["valiz", "foto", "yanlis", "tesekkur"];
+const TUR_URL = new URLSearchParams(location.search).get("tur");           // deneme: ?tur=valiz|foto|yanlis|tesekkur
+const TUR_HEDEF = "Acıbadem";
+const TUR_HIZ = { valiz: .5, foto: .8, yanlis: .8, tesekkur: .8 };        // yoldaş hızı (m/sn)
+const TUR_ACIL = .8, TUR_SOZ_ARA = 7, TUR_IPUCU = 6;                      // ilk soru gecikmesi, tekrar aralığı, "dokun" ipucu süresi (sn)
+const TUR_DOKUN_R = .55;                                                  // bekleyen turistin yerine dokunuş payı (m)
+const TUR_FOTO_ILK = [5, 9], TUR_FOTO_ARA = [11, 17];                             // ilk ve sonraki fotoğrafa kadar (sn)
+const TUR_FOTO_UYARI = .9, TUR_FOTO_KLIK = .5, TUR_FOTO_CEKIM = 1.7;                  // uyarı balonu, deklanşör, toplam çekim süresi (sn)
+const TUR_YANLIS_UYARI = .9, TUR_YANLIS_HIZ = 1.1;                                // işaret süresi (sn), ters yöne yürüme hızı (m/sn)
+const TUR_TES_SURE = 1.5, TUR_TES_DONDUR = .5;                                    // kapıyı kapatma süresi (sn); bu sürede kapı sayacının ne kadarı durur
+const TUR_KAYIP_UZAK = 9, TUR_KAYIP_SURE = 2;                                     // peronda bu kadar uzakta bu kadar kalırsa turist kaybolur
+const TUR_BAK_HIZ = 1.3, TUR_BAK_ACI = .8;                                // bekleyen turistin başını çevirişi (bakınma)
+const TUR_VAR = ["Buradayım!", "Evet, evet!", "Yanındayım!"], TUR_GELIYOR = ["Tamam!", "Geliyorum!", "Thank you!"];
+const TUR_SOR = ["Acıbadem?", "Acıbadem… metrobüs?", "Excuse me, Acıbadem?"];
+const TUR_SON = { // iyi sonuç sahnesi türe göre
+  valiz: "Dev valizin son basamağa kadar yanında yürüdü. Turist elini göğsüne koyup eğildi.",
+  foto: "Son fotoğrafı seninle çekti: sen, Acıbadem tabelası, bir de arkada kalkan metrobüs.",
+  yanlis: "Haritayı ters tuttuğunu söyledin. Güldü, haritayı katlayıp doğru yöne yürüdü.",
+  tesekkur: "Üç dilde teşekkür etti. Dördüncüsüne kapılar kapandı.",
+};
+// Görseller: geometri ve malzeme bir kez yaratılır, her yolcu mesh'i yalnız küçük gruplar kurar (disposePerson bunlara dokunmaz).
+const TUR_GEO = {
+  valiz: new THREE.BoxGeometry(.26, .7, .46), serit: new THREE.BoxGeometry(.275, .06, .475), sap: new THREE.BoxGeometry(.025, .28, .025),
+  kam: new THREE.BoxGeometry(.11, .07, .06), mercek: new THREE.CylinderGeometry(.024, .024, .03, 10),
+  harita: new THREE.BoxGeometry(.22, .28, .008), hatH: new THREE.BoxGeometry(.2, .012, .01),
+  sapkaK: new THREE.CylinderGeometry(.19, .19, .012, 14), sapkaT: new THREE.CylinderGeometry(.1, .11, .09, 12),
+};
+const TUR_MAT = { valiz: M(0xc2452d), valizK: M(0x7a2a1a), sap: M(0x333333), kam: M(0x1d1f24), mercek: M(0x8aa4c8), harita: M(0xe9e0b8), hatH: M(0x4a8f5a), sapkaK: M(0xe8d9a8), sapkaT: M(0xb0462e) };
+const turMesh = (g, m, x = 0, y = 0, z = 0) => { const o = new THREE.Mesh(TUR_GEO[g], TUR_MAT[m]); o.position.set(x, y, z); return o; };
+
+// Türe göre görseli yolcu gövdesine takar (npcKur ve peron mesh'i): valiz yanda, kamera ve harita sağ elde, şapka kafada.
+function turTak(b, tur) {
+  b.turK = tur; b.turE = null;
+  if (tur === "valiz") { const g = new THREE.Group(); g.add(turMesh("valiz", "valiz", 0, .35), turMesh("serit", "valizK", 0, .47), turMesh("sap", "sap", 0, .84)); g.position.set(.36, 0, 0); b.body.add(g); }
+  else if (tur === "foto" || tur === "yanlis") {
+    const g = new THREE.Group();
+    if (tur === "foto") { g.add(turMesh("kam", "kam"), turMesh("mercek", "mercek", 0, 0, -.045)); g.children[1].rotation.x = Math.PI / 2; }
+    else g.add(turMesh("harita", "harita"), turMesh("hatH", "hatH", 0, .03, .007));
+    g.position.set(0, J.cupY - J.elbowY, -.03); g.scale.setScalar(J.cupS / 1.6); b.elbows[1].add(g); b.turE = g;
+  } else if (tur === "tesekkur") { const g = new THREE.Group(); g.add(turMesh("sapkaK", "sapkaK", 0, 0), turMesh("sapkaT", "sapkaT", 0, .04)); g.position.y = J.headPiv + .085; b.head.add(g); }
+}
+// Turist pozu (kollar poseBody'den sonra): valiz kolu dışarı, harita göğüste, fotoğraf kolu yukarıda, işaret eden kol, bakınan baş.
+function turPoz(b, now, bakin, serbest = true) {
+  const d = G.ds, a = b.arms[1], e = b.elbows[1], k = d.fotoK || 0, ik = d.isK || 0;
+  if (bakin) b.head.rotation.y = Math.sin(now * TUR_BAK_HIZ + 1) * TUR_BAK_ACI;
+  if (serbest && d.tur === "valiz") a.rotation.z += .3; // düşen, kızan ve sendeleyen turistte kol pozları çekirdeğin pozuna bırakılır
+  if (serbest && d.tur === "yanlis") { a.rotation.set(.9, 0, .08); e.rotation.x = 1.45; }
+  if (serbest && k > .01) { a.rotation.x += (J.filmUp - a.rotation.x) * k; a.rotation.z += (.12 - a.rotation.z) * k; e.rotation.x += (J.filmEl - e.rotation.x) * k; b.head.rotation.x -= .08 * k; }
+  if (serbest && ik > .01) { const l = b.arms[0]; l.rotation.x += (1.45 - l.rotation.x) * ik; l.rotation.z += (-.35 - l.rotation.z) * ik; b.elbows[0].rotation.x += (.2 - b.elbows[0].rotation.x) * ik; }
+  if (b.turE) { // kamera ve harita dik kalır; ?stil'de softBody kolu sonradan yayın değerine yazar, o yüzden yaydaki (bir kare gecikmeli) açı okunur
+    const S = STIL && b.soft && b.soft.init ? b.soft.x : null;
+    b.turE.rotation.x = -((S ? S[4] : a.rotation.x) + (S ? S[7] : e.rotation.x)) - b.hip.rotation.x + (d.tur === "yanlis" ? .15 : 0);
+  }
+}
+// Balon (araçta) ya da, peronda yolcu nesnesi olmadığı için, kısa yazı.
+function turSoyle(yazi, tur, sure) { const n = yoldasNpc(); if (n) say(n, yazi, tur, sure); else flash(`Turist: ${yazi}`, tur === "ok" ? C.safe : C.sign, 1300); }
+// Bekleyen turisti çağırır: seninle gelir. Fotoğraf çekerken "bir saniye" der; zaten yanındaysa yalnız cevap verir.
+function turCagir(n) {
+  const y = G.ortak.yoldas, d = G.ds;
+  if (!y.bekle) { if (n) say(n, pick(TUR_VAR), "talk", 1.1); return; }
+  if (d.fotoF === 2) return turSoyle("Bir saniye!", "warn", 1);
+  d.cagri++; yoldasBekle(false); y.takipT = 0;
+  if (d.yF === 2) d.yF = 3;
+  if (!G.pl && n) { G.wave = .7; G.waveAt = { x: n.x, z: n.z }; }
+  turSoyle(pick(TUR_GELIYOR), "ok", 1.3); tone(560, .06, "triangle", .08);
+}
+// Fotoğraf çeken tür: arada uyarı balonu (0,9 sn), sonra durur, çeker, bekler. Yeniden çağırmak gerekir. `uygun`: şimdi başlayabilir mi.
+function turFotoAdim(h, uygun) {
+  const d = G.ds, y = G.ortak.yoldas;
+  if (d.tur !== "foto") return;
+  if (d.fotoF === 0) {
+    if (uygun && !y.bekle && (d.fotoT -= h) <= 0) { d.fotoF = 1; d.fotoS = 0; turSoyle("Bir fotoğraf!", "warn", TUR_FOTO_UYARI + .3); }
+    return;
+  }
+  d.fotoS += h;
+  if (d.fotoF === 1) { if (d.fotoS >= TUR_FOTO_UYARI) { d.fotoF = 2; d.fotoS = 0; d.klik = 0; yoldasBekle(true); } return; }
+  if (!d.klik && d.fotoS >= TUR_FOTO_KLIK) { d.klik = 1; tone(2600, .03, "square", .05); tone(1900, .06, "square", .04, .05); }
+  if (d.fotoS >= TUR_FOTO_CEKIM) { d.fotoF = 0; d.klik = 0; d.fotoT = TUR_FOTO_ARA[0] + Math.random() * (TUR_FOTO_ARA[1] - TUR_FOTO_ARA[0]); turSoyle("Güzel!", "ok", 1.2); }
+}
+
+DERTLER["turist"] = {
+  ad: "Turisti götür", giris: "Bir turist yol soruyor; sen zaten o yöne gidiyorsun.",
+  basla: { hat: 0, seg: 4 }, hedef: TUR_HEDEF,
+  durum() { const y = G.ortak.yoldas; if (!y) return ""; return y.bekle ? "Turist bekliyor" : yoldasUzak() > 3 ? "Turist geride" : "Turist yanında"; },
+  hat(ilk) {
+    const d = G.ds; if (!d || !ilk) return;
+    d.tur = TUR_LISTE.includes(TUR_URL) ? TUR_URL : TUR_LISTE[Math.floor(Math.random() * TUR_LISTE.length)];
+    Object.assign(d, { cagri: 0, acilT: TUR_ACIL, sozT: TUR_SOZ_ARA, ipT: 0, ipucu: false, perIpucu: false,
+      fotoT: TUR_FOTO_ILK[0] + Math.random() * (TUR_FOTO_ILK[1] - TUR_FOTO_ILK[0]), fotoF: 0, fotoS: 0, fotoK: 0, klik: 0, isK: 0, yF: 0, yS: 0, yz: 1,
+      tesSeg: -1, tesT: 0, uzakT: 0, kayip: false, birlikte: false, yanlisHat: false });
+    yoldasVer({ tip: "turist", ad: "Turist", hiz: TUR_HIZ[d.tur] });
+    yoldasBekle(true); // kapıya kendiliğinden gelmez, dokunup çağırmak gerekir
+  },
+  yol(geri) { const d = G.ds; if (!d || !d.tur || !geri) return; Object.assign(d, { fotoF: 0, klik: 0, tesT: 0, yF: 0 }); }, // düşüp devam edince yarım kalan sahneler sıfırlanır
+  adim(dt, h) {
+    const d = G.ds, y = G.ortak.yoldas; if (!d || !d.tur || !y || y.peron) return;
+    const n = yoldasNpc(); if (!n) return;
+    if (d.tesT > 0) { d.tesT -= h; if (G.state === "doors") G.doorT += h * TUR_TES_DONDUR; } // teşekkür kapıyı tamamen yitirtmesin
+    if (y.bekle && d.cagri === 0) { // henüz çağrılmadı: balonla hedefi sorar, bir süre sonra ipucu
+      if (d.acilT > 0) { if ((d.acilT -= h) <= 0) { say(n, TUR_SOR[0], "talk", 3); d.sozT = TUR_SOZ_ARA; } }
+      else if ((d.sozT -= h) <= 0) { say(n, pick(TUR_SOR), "talk", 2.4); d.sozT = TUR_SOZ_ARA; }
+      if (!d.ipucu && (d.ipT += h) > TUR_IPUCU) { d.ipucu = true; flash("Turiste dokun: seninle gelsin", C.sign, 2400); }
+    }
+    turFotoAdim(h, G.state === "ride" && !G.announced);
+  },
+  peron(dt) {
+    const d = G.ds, y = G.ortak.yoldas, pl = G.pl;
+    if (!d || !d.tur || !y || !y.peron || !pl) return;
+    if (!d.perIpucu && (pl.bus === "away" || pl.bus === "arriving")) { d.perIpucu = true; flash("Acıbadem için Söğütlüçeşme yönündeki araca bin", C.sign, 2600); }
+    if (!y.dis) return; // araçtan peron kenarına çıkana dek karışmaz
+    // Kayıp: peronda uzun süre çok uzakta kalan turist kaybolur (sonuçta ☆).
+    if (Math.hypot(y.px - pl.x, y.pz - pl.z) > TUR_KAYIP_UZAK) {
+      if ((d.uzakT += dt) >= TUR_KAYIP_SURE && !d.kayip) { d.kayip = true; flash("TURİST KAYBOLDU!", C.danger, 1800); tone(180, .3, "sawtooth", .07); }
+    } else d.uzakT = Math.max(0, d.uzakT - dt * 2);
+    turFotoAdim(dt, pl.door === null && pl.bus !== "closing");
+    if (d.tur !== "yanlis") return;
+    // Yanlış yöne yürüyen: önce işaret eder (0,9 sn), sonra peronun öbür ucuna doğru yürür; dokununca döner ve yanına gelir.
+    if (d.yF === 0) { if (!y.bekle && pl.door === null) { d.yF = 1; d.yS = 0; turSoyle("Şu taraf mı?", "warn", 1.2); } }
+    else if (d.yF === 1) { if ((d.yS += dt) >= TUR_YANLIS_UYARI) { d.yF = 2; d.yz = y.pz >= pl.z ? 1 : -1; yoldasBekle(true); } }
+    else if (d.yF === 2) {
+      if (!y.bekle) d.yF = 3;
+      else { y.pz = Math.max(-PLAT_Z + .5, Math.min(PLAT_Z - .5, y.pz + d.yz * TUR_YANLIS_HIZ * dt)); y.px = Math.min(PLAT_MAX_X, y.px + dt * .35); }
+    }
+  },
+  olay(tip, v) {
+    const d = G.ds; if (!d || !d.tur) return;
+    if (tip === "indi") {
+      if (v.hedef) d.birlikte = true;
+      Object.assign(d, { yF: 0, fotoF: 0, klik: 0, uzakT: 0, perIpucu: false, tesT: 0, tesSeg: -1 });
+    } else if (tip === "bindi") {
+      Object.assign(d, { yF: 0, fotoF: 0, klik: 0 });
+      // Yalnız binilen yoldan sonrası sayılır; Acıbadem'e ya da aktarma durağı Altunizade'ye giden araç doğrudur. ?aktarma'da hatlar son yola kısaldığı için denetim atlanır.
+      if (!QUICK && !curLine().seg.slice(G.seg).some((s) => s.to === TUR_HEDEF || s.to === "Altunizade")) { d.yanlisHat = true; d.kacirdi = true; flash("Bu araç Acıbadem'e gitmiyor!", C.danger, 2200); } // dert, inilen ilk durakta kötü biter
+    } else if (tip === "anons") {
+      const y = G.ortak.yoldas, n = yoldasNpc(), s = curSeg(); if (!y || !n) return;
+      if (s.to === TUR_HEDEF) say(n, "Acıbadem bu mu?", "talk", 2.2);
+      if (y.bekle && (s.to === TUR_HEDEF || s.mine)) flash("Turiste dokun: seninle insin", C.sign, 2400);
+    }
+  },
+  dokun(cx, cy, x, z) {
+    const d = G.ds, y = G.ortak.yoldas; if (!d || !d.tur || !y) return false;
+    let n = null, o;
+    if (!y.bekle) return false; // yanında yürüyen turistin gövdesi dokunuşu yutmaz; çekirdek yürüme ve tutma işini görür
+    if (G.wob && !G.wob.wob.end && tapOnNpc(G.wob, cx, cy)) return false; // sendeleyeni tutma dokunuşu önceliklidir
+    if (y.peron) { if (G.state !== "platform" || !G.pl || !y.dis || !y.bekle) return false; o = { x: y.px, z: y.pz }; } // peronda yalnız bekleyen turiste dokunulur
+    else { n = yoldasNpc(); if (!n || n.fade < .5) return false; o = n; } // kamera ile oyuncu arasında saydamlaşmış turist dokunuşu yutmaz
+    if (!(tapOnNpc(o, cx, cy, true) || (y.bekle && x !== null && Math.hypot(x - o.x, z - o.z) < TUR_DOKUN_R))) return false;
+    turCagir(n); return true;
+  },
+  engel(ne) {
+    const d = G.ds; if (ne !== "in" || !d || d.tur !== "tesekkur") return null;
+    const n = yoldasNpc(); if (!n) return null;
+    if (d.tesSeg !== G.seg) { // bu durakta ilk kez: yanına gelmiş turist kapı ağzında durup teşekkür eder
+      if (yoldasUzak() > YD_INME_MESAFE) return null; // uzaksa ortak-yoldas zaten "geride" der
+      d.tesSeg = G.seg; d.tesT = TUR_TES_SURE; n.act = { type: "talk", t: 0, dur: TUR_TES_SURE }; say(n, "Çok teşekkürler!", "talk", TUR_TES_SURE);
+    }
+    return d.tesT > 0 ? "Turist teşekkür ediyor!" : null;
+  },
+  npcKur(n, b) { if (n.yoldas === "turist" && G.ds && G.ds.tur) turTak(b, G.ds.tur); },
+  npcCiz(n, b, dt, now) {
+    const d = G.ds, y = G.ortak.yoldas; if (n.yoldas !== "turist" || !d || !d.tur || !y) return;
+    if (b.turK !== d.tur) turTak(b, d.tur);
+    const serbest = !n.mad && !n.wob && n.fallT === undefined && G.state !== "fallen";
+    turPoz(b, now, y.bekle && n.state === "stand" && !n.act && serbest, serbest);
+  },
+  ciz(dt, now) {
+    const d = G.ds, y = G.ortak.yoldas; if (!d || !d.tur || !y) return;
+    d.fotoK += ((d.fotoF > 0 ? 1 : 0) - d.fotoK) * Math.min(1, dt * 7);
+    d.isK += ((d.yF === 1 ? 1 : 0) - d.isK) * Math.min(1, dt * 8);
+    if (!ydMesh || !ydMesh.root.visible || !y.peron) return; // peron mesh'i (ortak-yoldas kurar); araçta turist yolcu olarak npcCiz'de
+    if (ydMesh.turK !== d.tur) turTak(ydMesh, d.tur);
+    ydMesh.head.rotation.set(0, 0, 0);
+    turPoz(ydMesh, now, y.bekle && !y.yur);
+  },
+  sonuc(b) {
+    const d = G.ds, birlikte = !!d.birlikte && !b.kacirdi, kayboldu = !!d.kayip, iyi = birlikte && !kayboldu;
+    const satirlar = [[birlikte, "Birlikte indiniz"], [!kayboldu, "Aktarmada kaybolmadı"]];
+    if (iyi) return { iyi, baslik: "Turist yolunu buldu", yazi: TUR_SON[d.tur], satirlar: [...satirlar, [true, "Yeni hat açıldı: Altunizade → Söğütlüçeşme"]] };
+    if (d.yanlisHat) return { iyi, baslik: "Yanlış araç", yazi: "Bu araç Acıbadem'e gitmiyordu. Turist haritaya baktı, sonra sana.", satirlar };
+    if (b.kacirdi) return { iyi, baslik: "Acıbadem geride kaldı", yazi: "Turist pencereden Acıbadem tabelasının uzaklaşmasını izledi. \"Burası değil miydi?\"", satirlar };
+    return { iyi, baslik: "Turist kayboldu", yazi: birlikte ? "Acıbadem'e vardınız ama turist aktarmada bir süre kayboldu; yolu başkalarına sormak zorunda kaldı." : "Peronda gözden kayboldu. Elinde harita, Acıbadem'in tersine yürüyordu.", satirlar };
+  },
+};
+// <<< BÖLGE dert-turist
+
 // ---------- Ekranlar ----------
 const panel = $("panel"), overlay = $("overlay");
 const show = (html) => { panel.innerHTML = html; overlay.hidden = false; overlay.scrollTop = 0; };
 const hide = () => { overlay.hidden = true; overlay.onclick = null; };
 const begin = () => { initAudio(); wake(); hide(); G.paused = false; };
-function play(li) { begin(); startLine(li); }
+function play(li) { begin(); dertAyarla(null); startLine(li); }
 function resume() { begin(); restartSeg(); }
 function wake() { try { navigator.wakeLock && navigator.wakeLock.request("screen").catch(() => {}); } catch (e) {} }
 
@@ -2774,10 +4787,19 @@ function showMenu() {
     $("go").onclick = () => { enableTilt(); play(-1); };
     return;
   }
+  const only = new URLSearchParams(location.search).get("dert");
+  if (only && DERTLER[only]) { // ?dert=<id>: menü yerine yalnız o dert
+    show(`<h1>${esc(DERTLER[only].ad)}</h1><p>${esc(DERTLER[only].giris)}</p><button class="primary" id="go" type="button">Başla</button>`);
+    $("go").onclick = () => { enableTilt(); dertBasla(only); };
+    return;
+  }
+  const ids = QUICK ? [] : Object.keys(DERTLER); // ?aktarma hatları tek yola indirir, dertlerin hedefi kalmaz; dert denemek için ?dert=<ad>&aktarma
   show(`<h1>Tutunmak yasak</h1>
     <p>Telefonu eğ, ayakta kal. Yol boyunca görevini yap, durağında in.</p>
-    <button class="primary" id="go" type="button">Hatta bin</button>`);
+    <button class="primary" id="go" type="button">Hatta bin</button>
+    ${ids.length ? `<h2>Bugünkü derdin</h2>${ids.map((id) => `<button class="dert" data-dert="${esc(id)}" type="button">${esc(DERTLER[id].ad)}<small>${esc(DERTLER[id].giris)}</small></button>`).join("")}` : ""}`);
   $("go").onclick = () => { enableTilt(); play(0); };
+  panel.querySelectorAll("button.dert").forEach((b) => { b.onclick = () => { enableTilt(); dertBasla(b.dataset.dert); }; });
 }
 
 function showTest() {
@@ -2792,7 +4814,7 @@ function showTest() {
 
 function showArrived() {
   const line = curLine(), last = G.line + 1 >= LINES.length;
-  const rows = line.seg.map((s, i) => s.task ? `<li>${G.results[i] ? "★ " + TASKS[s.task].ok : "☆ " + TASKS[s.task].fail}</li>` : "").join("");
+  const rows = line.seg.map((s, i) => segGorev(s) ? `<li>${G.results[i] ? "★ " + TASKS[s.task].ok : "☆ " + TASKS[s.task].fail}</li>` : "").join("");
   show(`<h1>İndin!</h1>
     <p>${line.name} · ${line.seg[line.seg.length - 1].to}</p>
     <div class="stars">${"★".repeat(G.lastStars)}${"☆".repeat(3 - G.lastStars)}</div>
@@ -2822,9 +4844,9 @@ function showPause() {
   show(`<h1>Durdu</h1>
     <p>${curLine().name} · ${curSeg().to} yolunda</p>
     <button class="primary" id="cont" type="button">Devam et</button>
-    <button id="menu" type="button">Hattın başına dön</button>`);
+    <button id="menu" type="button">${G.dert ? "Derdi baştan başlat" : "Hattın başına dön"}</button>`);
   $("cont").onclick = () => { G.userPause = false; begin(); };
-  $("menu").onclick = () => { G.userPause = false; play(G.line); };
+  $("menu").onclick = () => { G.userPause = false; if (G.dert) dertBasla(G.dert); else play(G.line); };
 }
 
 function showEnd(title, text) {
@@ -2832,9 +4854,9 @@ function showEnd(title, text) {
   show(`<h1>${title}</h1>
     <p>${text}</p>
     <button class="primary" id="retry" type="button">${G.seg ? "Bu duraktan devam" : "Tekrar dene"}</button>
-    <button id="menu" type="button">Hattın başına dön</button>`);
+    <button id="menu" type="button">${G.dert ? "Derdi baştan başlat" : "Hattın başına dön"}</button>`);
   $("retry").onclick = resume;
-  $("menu").onclick = () => play(G.line);
+  $("menu").onclick = () => (G.dert ? dertBasla(G.dert) : play(G.line));
 }
 
 function summary() {
@@ -2885,6 +4907,7 @@ function rebindPanel() {
   if (G.userPause) { overlay.hidden = true; showPause(); }
   else if (G.state === "menu") showMenu();
   else if (curSeg().test) showTest();
+  else if (G.state === "arrived" && G.dertSon) showDert();
   else if (G.state === "arrived") showArrived();
   else if (G.state === "fallen") showEnd("Düştün", FALL_LINES[G.falls % FALL_LINES.length]);
   else if (G.state === "missed") showEnd("Durağı kaçırdın", MISS_LINES[G.misses % MISS_LINES.length]);
@@ -2895,7 +4918,7 @@ $("pause").onclick = showPause;
 document.addEventListener("visibilitychange", () => { if (document.hidden) { showPause(); G.paused = true; } });
 
 // Test kancası
-window.__denge = { frame, poke, tapPerson, updateGags, look, camera, catchWob, tapOnNpc, servicesAt, pickDoor, platWalk, fallEnd, phones, busG, people: () => ({ crowdMeshes, seatedMeshes, player }), STIL, renderer, bridge, land, station, G, T, LINES, SEGS, SEATS, DOORS, step, startLine, startSeg, restartSeg, setWalkTarget, seatFront, FIXED, tilt, onOrient, pushStatic, BODY_R, doorPanels, glowMats, fall, nextInLine };
+window.__denge = { DERTLER, MODS, kanca, dertBasla, dertBitir, ev: (s) => eval(s), frame, poke, tapPerson, updateGags, look, camera, catchWob, tapOnNpc, servicesAt, pickDoor, platWalk, fallEnd, phones, busG, people: () => ({ crowdMeshes, seatedMeshes, player }), STIL, renderer, bridge, land, station, G, T, LINES, SEGS, SEATS, DOORS, step, startLine, startSeg, restartSeg, setWalkTarget, seatFront, FIXED, tilt, onOrient, pushStatic, BODY_R, doorPanels, glowMats, fall, nextInLine };
 
 startLine(TEST !== null ? -1 : 0); G.state = "menu"; setLed(TEST !== null ? "Tutunmak yasak" : "Hatta bin"); setTask(); flash("", C.text);
 showMenu();
